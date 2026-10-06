@@ -216,7 +216,44 @@ Run on this machine against cua-driver 0.34.0.
 | `launch_app` hidden | launched without stealing focus |
 
 Not yet proven: the `set_value` success path, `background_unavailable` →
-foreground escalation (needs an Electron host), `bounded` mode, `invoke_menu`.
+foreground escalation (needs an Electron host), `invoke_menu`.
+
+### Phase 4 — real tasks
+
+`scripts/verify-phase4.mjs` runs four tasks under `bounded`, asserting each
+postcondition from a fresh observation rather than trusting action feedback.
+
+| Task | Result |
+|---|---|
+| Calculator: 7 × 6 = | **PASS** — display read back as 42 after four background AX clicks |
+| Notepad: mixed CJK + ASCII | **PASS** — `type_text` twice, both `effect: confirmed`, document read back as `phase4 seed / ASCII-123 中文输入 OK` |
+| Browser DOM route | not testable — neither Edge nor Chrome is running |
+| Obsidian / WeChat addressability | WeChat **PASS** (minimized, tree degraded to 1 element); Obsidian not testable, not running |
+
+No input was sent to Obsidian or WeChat, by design: they hold the user's notes
+and messages.
+
+Four findings from this round:
+
+- **Calculator's keypad is 6 rows × 4 columns of 200px buttons, and the digits
+  start at row 2.** Rows 0 and 1 are functions (percent, CE, C, backspace,
+  reciprocal, square, root, divide). An earlier revision assumed row 0 held the
+  digits, pressed percent then divide, and reported 9. Locating keys by
+  geometry rather than label is what made this reliable — the labels are
+  localised and arrive mojibake'd through a Windows console.
+- **`=` is required.** Without it the calculator shows the running expression
+  and never produces the product, which reads as "the click did nothing".
+- **Minimized windows keep their permission but lose their tree.** WeChat
+  minimized exposed 1 element against 8 when visible.
+- **Two harness bugs that looked like driver bugs.** Notepad text appeared to
+  triple: the harness matched a stale window by a loose title pattern and
+  appended to a previous buffer. It also reset scratch state by rewriting a file
+  on disk while Notepad kept its buffer. Both are recorded in the script so the
+  next person does not re-diagnose them.
+
+Encoding note: CJK literals in the verification scripts are written as `\u`
+escapes. PowerShell's `Set-Content -Encoding UTF8` corrupted an embedded
+`计算器` mid-token once, producing an unterminated regex.
 
 ### Facts the official docs do not state
 

@@ -84,20 +84,119 @@ allow:
 
 resources:
   apps:
-    # Absolute, verified to exist on this machine.
-    - executable: C:\Windows\System32\notepad.exe
-      launch: true
+    # ---- scratch and system utilities (safe to drive) ----------------------
+    # Notepad on Windows 11 is a PACKAGED app. The window is owned by the copy
+    # under WindowsApps, not by C:\Windows\System32\notepad.exe, so listing only
+    # the launcher does NOT authorise the window. Measured:
+    #   pid 2348 Notepad.exe -> C:\Program Files\WindowsApps\
+    #     Microsoft.WindowsNotepad_11.2607.14.0_x64__8wekyb3d8bbwe\Notepad\Notepad.exe
+    #
+    # WARNING: that path carries the package VERSION. Every Notepad update
+    # changes it and this entry silently stops matching, which surfaces as
+    # get_window_state returning bounded_resource_outside_manifest on a path you
+    # can see in Task Manager. Re-derive it with scripts/probe-app-owners.mjs
+    # after any Notepad update, or drop Notepad and use a non-packaged editor.
+    - executable: C:\Program Files\WindowsApps\Microsoft.WindowsNotepad_11.2607.14.0_x64__8wekyb3d8bbwe\Notepad\Notepad.exe
+      launch: false
       windows: all
-      # Only ever terminates a process this runtime started. Never "always".
       terminate: driver_launched
 
-    - executable: C:\Windows\System32\calc.exe
+    # The launcher, kept so launch_app can still start Notepad. Authorising the
+    # launcher does not authorise the window it opens.
+    - executable: C:\Windows\System32\notepad.exe
       launch: true
       windows: all
       terminate: driver_launched
 
     - executable: C:\Windows\System32\charmap.exe
       launch: true
+      windows: all
+      terminate: driver_launched
+
+    # The Calculator launcher. Needed so the agent can START it; the window it
+    # creates is owned by ApplicationFrameHost.exe below, so both entries are
+    # required. calc.exe alone would authorise the launcher and nothing else.
+    - executable: C:\Windows\System32\calc.exe
+      launch: true
+      windows: all
+      terminate: driver_launched
+
+    # ---- packaged Windows apps. BRITTLE: read this before adding one -------
+    # Windows runs Calculator and Notepad as PACKAGED apps. The window is owned
+    # by the package copy under WindowsApps, never by the System32 launcher, and
+    # the package path carries the VERSION. Both of these broke within a single
+    # afternoon of testing:
+    #   Calculator was ApplicationFrameHost.exe, then became CalculatorApp.exe
+    #     after a Windows update.
+    #   Notepad is version 11.2607.14.0 today and will differ after its next
+    #     update, at which point this entry silently stops matching and
+    #     get_window_state returns bounded_resource_outside_manifest for a
+    #     process you can plainly see in Task Manager.
+    #
+    # Conclusion: the app allowlist is maintainable for third-party desktop apps
+    # (Obsidian, WeChat, Edge) whose install path is stable, and fragile for
+    # Windows' own packaged apps. Re-derive with scripts/probe-app-owners.mjs
+    # after any Windows or app update that touches these.
+    - executable: C:\Program Files\WindowsApps\Microsoft.WindowsCalculator_11.2607.0.0_x64__8wekyb3d8bbwe\CalculatorApp.exe
+      launch: false
+      windows: all
+      terminate: driver_launched
+
+    # The older host, kept because some Store apps still land in it. WARNING:
+    # this is much broader than "allow Calculator" — it authorises EVERY
+    # packaged app window on the desktop, Settings included. Drop it once you
+    # have confirmed you do not need it.
+    - executable: C:\WINDOWS\system32\ApplicationFrameHost.exe
+      launch: false
+      windows: all
+      terminate: driver_launched
+
+    # ---- browsers ---------------------------------------------------------
+    # SECURITY: this is blanket access to a logged-in session, not per-site.
+    # The runtime refuses to start if a manifest scopes resources.browser.origins
+    # while generic tools such as click and type_text remain allowed, so there
+    # is NO way to restrict these entries to particular sites. Anything signed in
+    # is reachable.
+    #
+    # launch is false deliberately: the agent may drive an existing window but
+    # may not spawn a new browser instance. terminate is driver_launched, so the
+    # agent can close only windows it opened.
+    - executable: C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe
+      launch: false
+      windows: all
+      terminate: driver_launched
+
+    - executable: C:\Program Files\Google\Chrome\Application\chrome.exe
+      launch: false
+      windows: all
+      terminate: driver_launched
+
+    # Chromium's renderer and GPU children are separate processes. Without these
+    # the agent can see the browser frame but not the page content.
+    - executable: C:\Program Files (x86)\Microsoft\Edge\Application\msedgewebview2.exe
+      launch: false
+      windows: all
+      terminate: driver_launched
+
+    # ---- user data. Treat as observe-only by policy ------------------------
+    # These hold your notes and your messages. They are listed so the agent can
+    # LOOK at them on request. Nothing in this repository sends input to them,
+    # and config/cua-policy.yaml is the right place to enforce that if you later
+    # want it mechanical.
+    - executable: C:\Program Files\Obsidian\Obsidian.exe
+      launch: false
+      windows: all
+      terminate: driver_launched
+
+    - executable: C:\Program Files\Tencent\Weixin\Weixin.exe
+      launch: false
+      windows: all
+      terminate: driver_launched
+
+    # WeChat renders some panels in a bundled plugin host. It shows the chat
+    # list, so it needs its own entry for window-level observation.
+    - executable: C:\Users\spring\AppData\Roaming\Tencent\xwechat\xplugin\plugins\RadiumWMPF\WeChatAppEx.exe
+      launch: false
       windows: all
       terminate: driver_launched
 

@@ -227,13 +227,24 @@ Verified: a manifest-listed `charmap.exe` is addressable (15 elements), while
 `SystemSettings.exe` and `explorer.exe` are refused with
 `bounded_resource_outside_manifest`.
 
-Packaged apps are the trap here. Calculator's window is owned by
-`ApplicationFrameHost.exe`, not `calc.exe`, so listing `calc.exe` will not
-authorise it. Check `list_windows`' `app_name`, or `Get-Process`'s `Path`, before
-writing an app entry.
+Packaged apps are the trap here. Calculator's window is owned by a package copy
+under `WindowsApps`, not by `calc.exe`, so listing `calc.exe` will not authorise
+it. Check `list_windows`' `app_name`, or `Get-Process`'s `Path`, before writing
+an app entry. Those paths carry the **package version**, so a Windows update can
+invalidate an entry that was correct an hour ago — during testing, Calculator
+moved from `ApplicationFrameHost.exe` to `CalculatorApp.exe`. Re-derive with
+`scripts/probe-app-owners.mjs` after updates. Third-party apps with stable install
+paths are the maintainable case.
 
 `bounded` also fails closed rather than degrading: with no manifest, or with a
 manifest but no approval, startup is refused outright.
+
+### Minimized windows
+
+A minimized window stays in the manifest and stays addressable, but its UIA tree
+collapses. Measured: WeChat minimized exposed 1 element against 8 when visible.
+Do not treat a small element count on a minimized window as a permission
+problem, and do not infer reachability from `is_on_screen`.
 
 ## Loop
 
