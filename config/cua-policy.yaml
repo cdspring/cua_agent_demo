@@ -1,0 +1,77 @@
+# Agent-layer policy for `cua-driver`. Complements the capability manifest.
+#
+# The manifest decides WHICH apps, files, and tools are reachable.
+# This policy decides WHICH ARGUMENTS are acceptable.
+# Use both: the manifest alone cannot stop `type_text` from writing 10,000
+# characters, and the policy alone cannot stop input to an unlisted app.
+#
+# Loaded via CUA_DRIVER_POLICY_FILE. Deny by default. Evaluated as:
+#   deny.tools -> allow.tools -> matching allow.rules -> deny
+# Constraints support min, max, max_length, pattern (RE2), and allowed.
+#
+#   $env:CUA_DRIVER_POLICY_FILE = "$PWD\config\cua-policy.yaml"
+#   cua-driver serve
+#
+# For rules OpenCode should enforce rather than the driver, prefer
+# opencode.jsonc `permissions`, which prompts the user. This file cannot prompt.
+
+allow:
+  # Any arguments
+  tools:
+    # observation is safe with any arguments
+    - list_windows
+    - list_apps
+    - get_window_state
+    - get_accessibility_tree
+    - get_desktop_state
+    - wait
+    - end_session
+
+  rules:
+    # Bound text entry. A length cap plus an ASCII pattern stops both runaway
+    # loops and accidental multi-line pastes. Widen the pattern only where the
+    # target genuinely needs non-ASCII.
+    - tool: type_text
+      constraints:
+        text:
+          max_length: 500
+          pattern: "^[\x20-\x7E\n\t]*$"
+
+    # Bound scrolling so a runaway wheel event cannot cascade.
+    - tool: scroll
+      constraints:
+        amount:
+          min: -20
+          max: 20
+
+    # Clicks must name a target explicitly. Without a target the driver would
+    # act on whatever is focused, which is the exact failure this project hit.
+    - tool: click
+      constraints:
+        target:
+          required: true
+
+    # Only allow launching known-safe apps; launching is how an agent ends up
+    # running something it was never asked to run.
+    - tool: launch_app
+      constraints:
+        executable:
+          allowed:
+            - "C:\\Windows\\System32\\notepad.exe"
+            - "C:\\Windows\\System32\\calc.exe"
+            - "C:\\Windows\\System32\\mspaint.exe"
+
+    # Drag is the action most likely to cause data loss (moving files, closing
+    # a dialog by accident). Bound its duration so it cannot stall.
+    - tool: drag
+      constraints:
+        durationMs:
+          min: 100
+          max: 5000
+
+deny:
+  tools:
+    # Never reachable through this configuration, regardless of manifest scope.
+    - shell_execute
+    # Uploading leaves the machine. Requires a deliberate, separate decision.
+    - upload

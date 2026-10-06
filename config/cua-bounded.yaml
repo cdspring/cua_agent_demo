@@ -1,0 +1,84 @@
+# Capability manifest for `cua-driver` in `bounded` mode.
+#
+# Why bounded: the default `standard` mode allows input to ANY application
+# with no prompt. That is fine for a one-off tutorial and wrong for an agent
+# that runs unattended on a machine with a logged-in browser.
+#
+# This manifest is deny by default. A tool must appear in allow.tools AND every
+# resource it touches must match, otherwise the call is denied. A manifest can
+# only narrow a mode, never widen one.
+#
+# Windows notes:
+#   - Apps are identified by absolute `executable`, not bundle_id (that is macOS).
+#   - Keep `desktop.display: false` unless you truly need full-display capture
+#     and screen-coordinate input. It is the broadest grant in this file.
+#   - Do NOT add `resources.browser.origins` here. The runtime refuses to start
+#     when a manifest scopes browser origins while generic tools such as click
+#     and get_window_state remain available, because those tools see whatever
+#     tab is open. Run browser work and desktop work as two runtimes.
+#
+# Verify before unattended use:
+#   1. an in-scope call succeeds silently
+#   2. the same tool against another app/path returns bounded_resource_outside_manifest
+#   3. an unlisted tool returns permission_denied
+
+version: 3
+
+# bounded requires both of these.
+expires_after: 8h
+idle_timeout: 30m
+
+allow:
+  tools:
+    # session lifecycle
+    - start_session
+    - end_session
+    # observation (read-only)
+    - list_windows
+    - list_apps
+    - get_window_state
+    - get_accessibility_tree
+    - get_desktop_state
+    - wait
+    # input — keep this list as small as the task allows
+    - click
+    - type_text
+    - press_key
+    - hotkey
+    - scroll
+    - drag
+    - move_cursor
+    # launch and teardown
+    - launch_app
+    - kill_app
+
+resources:
+  apps:
+    # Replace with the real absolute paths on this machine. These are examples
+    # of the shape; an unlisted executable is denied.
+    - executable: C:\Windows\System32\notepad.exe
+      launch: true
+      windows: all
+      # Only ever terminates a process this runtime started. Never "always".
+      terminate: driver_launched
+
+    - executable: C:\Windows\System32\calc.exe
+      launch: true
+      windows: all
+      terminate: driver_launched
+
+  files:
+    read:
+      # Scoped input directory. Canonical-path component comparison.
+      - dir: C:\Users\spring\Documents
+        recursive: false
+    write:
+      # Never grant write to a broad root. Keep outputs in one place.
+      - dir: C:\Users\spring\AppData\Local\Temp\opencode\cu-output
+        recursive: true
+
+  desktop:
+    # Narrow by default: full-display capture plus screen-coordinate input is
+    # the grant that makes pixel addressing possible at all. Set true only if
+    # the task genuinely needs the whole screen.
+    display: false

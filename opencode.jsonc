@@ -1,0 +1,59 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  "$comment": [
+    "plugins: the hand-written fallback backend in this repo.",
+    "mcp: cua-driver, the preferred backend. Comment the `cua` entry out until",
+    "it is installed; see README Phase 1.",
+    "permissions: action names for MCP tools are `<server>_<tool>` with resource",
+    "`*`. Verified against the v2.0.22 CLI binary: the sanitiser is",
+    "`replace(/[^a-zA-Z0-9_-]/g,\"_\")`, whose trailing hyphen is a literal, so",
+    "hyphens SURVIVE. Server `cua-driver` therefore yields `cua-driver_*`.",
+    "Re-derive with scripts/resolve-mcp-permission-action.ps1 after a CLI upgrade."
+  ],
+
+  "plugins": ["./.opencode/plugins/computer-use.ts"],
+
+  "mcp": {
+    "cua": {
+      "type": "local",
+      "command": ["cua-driver", "mcp"],
+      "enabled": false,
+      "environment": {
+        "$comment": "Set to bounded once config/cua-bounded.yaml is reviewed. standard allows input to ANY app with no prompt.",
+        "CUA_DRIVER_PERMISSION_MODE": "standard"
+      }
+    }
+  },
+
+  "permissions": [
+    { "$comment": "Observation is cheap and repeated. Never prompt for it.", "action": "cua-driver_list_windows", "resource": "*", "effect": "allow" },
+    { "action": "cua-driver_list_apps", "resource": "*", "effect": "allow" },
+    { "action": "cua-driver_get_window_state", "resource": "*", "effect": "allow" },
+    { "action": "cua-driver_get_accessibility_tree", "resource": "*", "effect": "allow" },
+    { "action": "cua-driver_get_desktop_state", "resource": "*", "effect": "allow" },
+    { "action": "cua-driver_wait", "resource": "*", "effect": "allow" },
+
+    { "$comment": "Anything that changes the machine asks first.", "action": "cua-driver_click", "resource": "*", "effect": "ask" },
+    { "action": "cua-driver_type_text", "resource": "*", "effect": "ask" },
+    { "action": "cua-driver_press_key", "resource": "*", "effect": "ask" },
+    { "action": "cua-driver_hotkey", "resource": "*", "effect": "ask" },
+    { "action": "cua-driver_drag", "resource": "*", "effect": "ask" },
+    { "action": "cua-driver_scroll", "resource": "*", "effect": "ask" },
+    { "action": "cua-driver_move_cursor", "resource": "*", "effect": "ask" },
+    { "action": "cua-driver_launch_app", "resource": "*", "effect": "ask" },
+    { "action": "cua-driver_kill_app", "resource": "*", "effect": "ask" },
+
+    { "$comment": "Fallback backend. computer_act includes click/type/key, so ask.", "action": "computer_screenshot", "resource": "*", "effect": "allow" },
+    { "action": "computer_screen", "resource": "*", "effect": "allow" },
+    { "action": "computer_act", "resource": "*", "effect": "ask" }
+  ],
+
+  "media": {
+    "image": {
+      "max_width": 2000,
+      "max_height": 2000,
+      "max_base64_bytes": 5242880
+    }
+  }
+}

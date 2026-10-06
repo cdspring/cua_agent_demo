@@ -1,0 +1,13 @@
+# Screenshots and captures produced by the fallback backend.
+*.png
+*.jpg
+*.jpeg
+
+# Cua output directory referenced by config/cua-bounded.yaml
+cu-output/
+
+# Local scratch
+tmp/
+*.log
+.DS_Store
+Thumbs.db

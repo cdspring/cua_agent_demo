@@ -1,0 +1,93 @@
+{
+  "$comment": "Machine-readable form of references/routing.md. The skill reads the prose; the plugin and any checker read this. Keep the two in sync — routing.md is the source of truth for judgement, this file is for automation.",
+  "version": 1,
+  "backend": {
+    "preferred": "cua-driver",
+    "fallback": "cu.ps1",
+    "fallbackPolicy": "capture-only: never use for type_text, key, or click once cua-driver is available"
+  },
+  "ladder": ["ax", "px", "page", "foreground"],
+  "windowsBackgroundSupport": {
+    "$comment": "Empirical, from cua docs/action-support.md. 'unproven' means do not assume either way.",
+    "WPF": {
+      "supported": ["combo_selection", "left_click", "value_change", "px_left_click_uia_hittest"],
+      "refused": ["f5", "px_drag"]
+    },
+    "WinUI3": {
+      "supported": ["control", "value", "selection", "popup", "slider"],
+      "refused": [],
+      "unproven": ["background_right_click", "background_double_click"]
+    },
+    "Electron": {
+      "supported": ["left_click", "child_window"],
+      "refused": [
+        "right_click",
+        "double_click",
+        "drag",
+        "type_text",
+        "press_key",
+        "hotkey",
+        "scroll"
+      ],
+      "refusalCode": "background_unavailable",
+      "note": "Keyboard and scroll are entirely unavailable in background on Windows. Expect foreground."
+    },
+    "Tauri": {
+      "supported": ["left_click", "right_click", "double_click", "type_text", "press_key", "child_window"],
+      "refused": ["hotkey", "scroll_px", "drag_px"]
+    },
+    "WebView2": {
+      "supported": ["cdp_page_operations", "px_left_click_uia_hittest"],
+      "refused": [],
+      "unproven": ["native_keyboard", "pointer_beyond_left_click"]
+    }
+  },
+  "effects": {
+    "confirmed": { "meaning": "read back through accessibility", "verified": true, "advance": true },
+    "unverifiable": {
+      "meaning": "delivered but no read-back available; the app may echo a write it did not apply",
+      "advance": false,
+      "do": "observe again"
+    },
+    "suspected_noop": { "meaning": "nothing changed", "advance": false, "do": "observe and re-locate" },
+    "partial": { "meaning": "partially applied", "advance": false, "do": "observe and reconcile" },
+    "refused": { "meaning": "blocked before dispatch", "advance": false, "do": "read the code" }
+  },
+  "refusals": {
+    "stale_element_token": { "reusable": false, "do": "re-observe; the element route still works" },
+    "background_unavailable": { "do": "retry only that action as foreground" },
+    "background_occluded": { "do": "re-observe or escalate" },
+    "background_uipi_blocked": { "do": "stop and ask the user; never bypass" },
+    "session_ended": { "do": "start_session again" },
+    "bounded_resource_outside_manifest": { "do": "widen the manifest deliberately, never silently" },
+    "authorization_required": { "do": "needs a launch grant or host decision" }
+  },
+  "riskGates": {
+    "irreversible": {
+      "triggers": ["send", "submit", "pay", "delete", "overwrite", "leave_machine"],
+      "action": "question_before_proceeding"
+    },
+    "secrets": { "detect": "password field present", "action": "refuse to type; ask the user" },
+    "integrity": { "detect": "target runs elevated", "action": "refuse" },
+    "staleness": { "triggers": ["stale_element_token", "session idle > 5 minutes"], "action": "re-observe" },
+    "maxAttemptsSameTarget": 2
+  },
+  "costControl": {
+    "boundTreeCalls": { "params": ["max_elements", "max_depth"] },
+    "reuse": ["pid", "window_id"],
+    "batch": "one type_text per field group",
+    "measuredSaving": { "task": "Calculator via cua-driver", "beforeTokens": 71088, "afterTokens": 12251 }
+  },
+  "cheatSheet": [
+    { "see": "target in tree with action pattern", "do": "ax background", "avoid": "pixels" },
+    { "see": "target only in screenshot", "do": "px with capture_id", "avoid": "expecting ax" },
+    { "see": "field in tree without action pattern", "do": "px to focus then type_text", "avoid": "type_text alone" },
+    { "see": "Electron on Windows", "do": "foreground", "avoid": "background attempts" },
+    { "see": "Chromium page", "do": "page via CDP", "avoid": "ax or px" },
+    { "see": "effect unverifiable", "do": "observe again", "avoid": "assuming success" },
+    { "see": "effect suspected_noop", "do": "re-locate", "avoid": "retry in place" },
+    { "see": "stale_element_token", "do": "re-observe", "avoid": "reusing the token" },
+    { "see": "background_uipi_blocked", "do": "stop and ask", "avoid": "bypassing" },
+    { "see": "5 attempts without effect", "do": "stop and report", "avoid": "more clicking" }
+  ]
+}
