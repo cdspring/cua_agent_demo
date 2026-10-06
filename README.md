@@ -29,7 +29,8 @@ config/
   skills/computer-use/
     SKILL.md                                      the procedure
     references/routing.md                        seven layers, ladders, host capability tables
-    references/decision-table.json                the same logic, machine-readable
+    references/decision-table.json               routing, effects and refusals, tabulated
+                                               (reference only; nothing reads it at runtime)
     references/recipes.md                         worked task flows
     references/troubleshooting.md                 failure modes
     scripts/cu.ps1                                Win32 actions: SendInput, BitBlt
@@ -81,22 +82,37 @@ daemon must run in the interactive session; Session 0 cannot see the desktop.
 
 ### Phase 2 — enable in OpenCode
 
-Set `mcp.cua.enabled` to `true` in `opencode.jsonc` and restart OpenCode.
+In `opencode.jsonc`, change `mcp.servers.cua.disabled` to `false` and restart
+OpenCode. Two details are deliberate:
 
-Permission action names are **verified, not guessed**. OpenCode builds them as
-`<server>_<tool>`, and the sanitiser in the v2.0.22 CLI is:
+- **Servers nest under `mcp.servers`.** V2 does not accept a server name
+  directly under `mcp`.
+- **`codemode: false`** keeps these tools on the provider's native tool list.
+  The default is `true`, which routes them through Code Mode as
+  `tools.<server>.<tool>` and makes the permission action name ambiguous.
+
+Permission action names are **verified, not guessed**. OpenCode names an MCP
+tool `<server>_<tool>`, replacing characters other than letters, numbers, `_`
+and `-` with `_`. The sanitiser in the v2.0.22 CLI is:
 
 ```js
 Kr = (e) => e.name.replace(/[^a-zA-Z0-9_-]/g, "_")
 ```
 
-The trailing hyphen is a literal, not a range operator, so hyphens survive:
-`cua-driver` + `get_window_state` → **`cua-driver_get_window_state`**.
-Re-derive after a CLI upgrade:
+The trailing hyphen is a literal member of the set, not a range operator, so
+hyphens survive: `cua-driver` + `get_window_state` →
+**`cua-driver_get_window_state`**. Re-derive after a CLI upgrade:
 
 ```powershell
 powershell -File scripts/resolve-mcp-permission-action.ps1
 ```
+
+### Do not install the official agent skill pack
+
+`cua-driver skills install` links a second skill (`@cua/driver`) that teaches
+the same routing. Two skills giving conflicting instructions is worse than one.
+This skill is the single source of truth here; the driver's platform details can
+still be read directly from its docs.
 
 ### Phase 3 — narrow the permissions
 
@@ -124,6 +140,9 @@ The manifest decides which apps and files are reachable. The policy decides
 which arguments are acceptable. Neither prompts the user — for that, use
 `permissions` in `opencode.jsonc`.
 
+Set these as `environment` entries under `mcp.servers.cua` in `opencode.jsonc`,
+or export them before launching OpenCode. Use absolute paths for the manifest.
+
 ### Phase 4 — validate on real tasks
 
 | # | Task | What it proves |
@@ -144,7 +163,11 @@ Seven layers. Read `references/routing.md` before the first action.
 |---|---|---|
 | L0 | Better interface? | shell, then browser (CDP), then GUI |
 | L1 | Backend | `cua-driver`; `cu.ps1` capture-only |
-| L2 | Observation | `list_windows` (free) → `get_window_state` |
+| L2 | Observation | `list_windows` (free) → window-scoped capture |
+
+Observation is window-scoped by default in both backends. A whole-desktop
+capture is available but costs several times more image tokens and includes
+unrelated windows, so it is opt-in.
 | L3 | Addressing | **AX → PX → page → foreground** |
 | L4 | Delivery | background, escalate only on refusal |
 | L5 | Verification | only `effect: confirmed` is success |

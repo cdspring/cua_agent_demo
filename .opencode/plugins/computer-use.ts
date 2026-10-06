@@ -204,9 +204,9 @@ export default Plugin.define({
       editor.add({
         name: "screenshot",
         description:
-          "Capture the screen and return it as an image. This is the first step of every " +
+          "Capture the active window and return it as an image. This is the first step of every " +
           "interaction: look before you act. Use it again after acting to check the result. " +
-          "Pass `foreground: true` when you already know which app you are working in. " +
+          "Prefer a small `region` when you already know roughly where the target is. " +
           COORDINATE_NOTE,
         input: {
           type: "object",
@@ -225,7 +225,15 @@ export default Plugin.define({
             },
             foreground: {
               type: "boolean",
-              description: "Capture only the active window. Cheaper and clearer when the target app is known.",
+              description:
+                "Capture only the active window. This is already the default; kept for explicitness.",
+            },
+            wholeDesktop: {
+              type: "boolean",
+              description:
+                "Capture every display instead of the active window. Costs several times more " +
+                "image tokens and includes unrelated windows, so ask for it only when the target " +
+                "spans displays or the active window is not what you need.",
             },
             maxWidth: {
               type: "number",
@@ -240,12 +248,16 @@ export default Plugin.define({
         execute: async (input, context) => {
           const args = input as Args
           const format = str(args.format) ?? "jpeg"
+          // The script defaults to the active window; only an explicit request
+          // widens the capture to every display.
+          const wholeDesktop = bool(args.wholeDesktop)
           const flags = toFlags("screenshot", {
             ...args,
             maxWidth: args.maxWidth ?? maxWidth,
             format,
             quality: args.quality ?? 78,
           })
+          if (wholeDesktop) flags.push("-WholeDesktop")
           const result = await runScript(flags, context.signal)
           return { content: toContent(result, { screenshot: true }) as any }
         },

@@ -17,9 +17,9 @@ obvious one fails** — interface, then accessibility element, then pixel, then
 page, then foreground. Skipping it is how ten turns get burned on a background
 action an Electron app cannot accept.
 
-`references/decision-table.json` is the same logic machine-readable: proven and
-refused actions per Windows host, every `effect` and refusal code, and the
-cost-control settings.
+`references/decision-table.json` tabulates the same routing: proven and refused
+actions per Windows host, every `effect` and refusal code, and the
+cost-control settings. Read it as reference, not as something that runs.
 
 ## Backends
 
@@ -104,15 +104,18 @@ produced the coordinates. Aim at the centre of a target, never its edge.
 
 ## Cost
 
-Screenshots dominate context. Prefer `list_windows` over a capture when you only
-need to identify a window. Bound `get_window_state` with `max_elements` and
-`max_depth`, reuse `pid` and `window_id`, and batch text into one `type_text`.
-On their Calculator example those changes cut uncached input from 71,088 to
-12,251 tokens.
+Screenshots dominate context, and both backends capture the **active window**
+rather than the whole desktop by default. Ask for a full-desktop capture only
+when the target spans displays or the active window is not what you need.
+
+Prefer `list_windows` over a capture when you only need to identify a window.
+Bound `get_window_state` with `max_elements` and `max_depth`, reuse `pid` and
+`window_id`, and batch text into one `type_text`. On their Calculator example
+those changes cut uncached input from 71,088 to 12,251 tokens.
 
 ## More
 
 - `references/routing.md` — the seven layers, ladders, and per-host capability tables
-- `references/decision-table.json` — machine-readable routing, effects, refusals, gates
+- `references/decision-table.json` — routing, effects, refusals and gates, tabulated
 - `references/recipes.md` — worked flows: opening apps, file dialogs, form filling
 - `references/troubleshooting.md` — blank captures, missed clicks, focus, wrong-window input

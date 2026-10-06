@@ -64,6 +64,7 @@ param(
   [int]$MaxWidth = 0,        # downscale to this width, 0 = keep
   [ValidateRange(1, 100)][int]$Quality = 82,
   [switch]$Foreground,       # screenshot only the active window
+  [switch]$WholeDesktop,     # screenshot the entire virtual desktop instead
   [int]$Windows = 30         # windows: how many to report
 )
 
@@ -476,13 +477,21 @@ switch ($Action.ToLowerInvariant()) {
   }
 
   'screenshot' {
-    if ($Foreground) {
+    # Default to the active window. A whole-desktop capture on a HiDPI display
+    # costs several times more image tokens and includes every unrelated window,
+    # so it must be asked for explicitly. This mirrors cua-driver, whose
+    # screenshot is window-scoped by default (see its
+    # --claude-code-computer-use-compat mode, which requires pid + window_id).
+    $hasRegion = ($X -ne [int]::MinValue -and $Y -ne [int]::MinValue)
+    # Precedence: an explicit rectangle beats everything, then the default
+    # foreground window, and the whole desktop only when asked for.
+    if (-not $WholeDesktop -and -not $hasRegion) {
       $fg = [CU.Native]::GetForegroundWindow()
       $r = New-Object CU.RECT
       if (-not [CU.Native]::GetWindowRect($fg, [ref]$r)) { throw "Cannot read foreground window rect" }
       $rect = New-Object System.Drawing.Rectangle($r.Left, $r.Top, ($r.Right - $r.Left), ($r.Bottom - $r.Top))
       $result.region = @{ kind = 'foreground'; x = $rect.X; y = $rect.Y; width = $rect.Width; height = $rect.Height }
-    } elseif ($X -ne [int]::MinValue -and $Y -ne [int]::MinValue) {
+    } elseif ($hasRegion) {
       if ($X2 -eq [int]::MinValue) { $X2 = $X + 400 }
       if ($Y2 -eq [int]::MinValue) { $Y2 = $Y + 300 }
       $rect = New-Object System.Drawing.Rectangle($X, $Y, ($X2 - $X), ($Y2 - $Y))

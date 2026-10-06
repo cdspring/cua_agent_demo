@@ -1,5 +1,5 @@
 {
-  "$comment": "Machine-readable form of references/routing.md. The skill reads the prose; the plugin and any checker read this. Keep the two in sync — routing.md is the source of truth for judgement, this file is for automation.",
+  "$comment": "Tabulated form of references/routing.md, for a human or a future checker to read. NOT an execution mechanism: nothing in this repository reads this file at runtime. The model routes from routing.md and SKILL.md. Forcing routing would need a ctx.session.hook(\"context\") that rewrites the tool set, which is not implemented. routing.md is the source of truth; keep this file in sync with it.",
   "version": 1,
   "backend": {
     "preferred": "cua-driver",
