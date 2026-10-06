@@ -1,13 +1,18 @@
 {
-  "$comment": "Tabulated form of references/routing.md, for a human or a future checker to read. NOT an execution mechanism: nothing in this repository reads this file at runtime. The model routes from routing.md and SKILL.md. Forcing routing would need a ctx.session.hook(\"context\") that rewrites the tool set, which is not implemented. routing.md is the source of truth; keep this file in sync with it.",
-  "version": 2,
+  "$comment": "Routing table, cross-validated against the INSTALLED driver by scripts/check-docs.mjs. That checker derives the tool list from `cua-driver list-tools` at run time and fails if the version here does not match, if a documented tool is absent, or if a refusal code observed in practice is missing. It found the deprecated-tools/deprecated-params conflation and six missing refusal codes when it was first written.",
+  "version": 3,
   "verifiedAgainst": "cua-driver 0.34.0, Windows x86_64, session 3 interactive",
   "backend": {
     "preferred": "cua-driver",
     "fallback": "cu.ps1",
     "fallbackPolicy": "capture-only: never use for type_text, key, or click once cua-driver is available"
   },
-  "ladder": ["element_token", "pixel", "page", "foreground"],
+  "ladder": [
+    "element_token",
+    "pixel",
+    "page",
+    "foreground"
+  ],
   "delivery": {
     "$comment": "The driver is explicit that background is mandatory-first. Do not pre-emptively foreground.",
     "default": "background",
@@ -21,8 +26,16 @@
     "get_desktop_state": "whole display, for targets spanning displays",
     "get_screen_size": "display size and scale factor",
     "zoom": "region at native resolution",
-    "costBounds": ["max_elements", "max_depth", "max_image_dimension", "query"],
-    "defaults": { "max_elements": 5000, "max_depth": 25 },
+    "costBounds": [
+      "max_elements",
+      "max_depth",
+      "max_image_dimension",
+      "query"
+    ],
+    "defaults": {
+      "max_elements": 5000,
+      "max_depth": 25
+    },
     "measuredSaving": {
       "task": "Calculator via cua-driver",
       "beforeTokens": 71088,
@@ -43,15 +56,27 @@
   },
   "effects": {
     "$comment": "Action facts are NOT task outcomes. Even confirmed only means publishable readback exists; the task postcondition still needs separate checking. This is the driver's own WORKFLOW.md rule.",
-    "confirmed": { "meaning": "publishable readback exists", "taskOutcome": "still verify the postcondition" },
+    "confirmed": {
+      "meaning": "publishable readback exists",
+      "taskOutcome": "still verify the postcondition"
+    },
     "unverifiable": {
       "meaning": "delivery cannot prove effect; the app may echo a write it did not apply",
       "do": "observe again",
       "observedOnWin": "Calculator button and pixel click both returned unverifiable while demonstrably changing state; type_text on a Notepad Document returned confirmed"
     },
-    "suspected_noop": { "meaning": "evidence suggests no useful change", "do": "observe and re-locate" },
-    "partial": { "meaning": "only the delivered portion landed", "do": "inspect before repairing" },
-    "refused": { "meaning": "the route deliberately did not deliver", "do": "read the code" }
+    "suspected_noop": {
+      "meaning": "evidence suggests no useful change",
+      "do": "observe and re-locate"
+    },
+    "partial": {
+      "meaning": "only the delivered portion landed",
+      "do": "inspect before repairing"
+    },
+    "refused": {
+      "meaning": "the route deliberately did not deliver",
+      "do": "read the code"
+    }
   },
   "routes": {
     "$comment": "Public actuator classes, from WORKFLOW.md.",
@@ -63,12 +88,26 @@
   },
   "escalation": {
     "$comment": "A suggestion, never authorization and never an automatic retry.",
-    "targets": ["pixel", "foreground", "page"],
-    "reasons": ["route_unavailable", "delivery_failed", "effect_unconfirmed", "suspected_noop", "permission_required"]
+    "targets": [
+      "pixel",
+      "foreground",
+      "page"
+    ],
+    "reasons": [
+      "route_unavailable",
+      "delivery_failed",
+      "effect_unconfirmed",
+      "suspected_noop",
+      "permission_required"
+    ]
   },
   "verifyState": {
     "$comment": "For expressible postconditions. unknown is NOT success.",
-    "results": ["satisfied", "unsatisfied", "unknown"],
+    "results": [
+      "satisfied",
+      "unsatisfied",
+      "unknown"
+    ],
     "readAlso": "unknown_reason",
     "webContentText": "stays unknown with untrusted_source; read from a fresh snapshot instead"
   },
@@ -87,33 +126,101 @@
   },
   "noWaitTool": {
     "$comment": "There is no wait/sleep tool in 0.34.0.",
-    "alternatives": ["shell sleep", "type_text delay_ms", "get_window_state timeout_ms"]
+    "alternatives": [
+      "shell sleep",
+      "type_text delay_ms",
+      "get_window_state timeout_ms"
+    ]
   },
   "typeTextConfirmation": {
     "$comment": "type_text with element_token writes via ValuePattern and reads back by handle. confirmed only when the complete expected value is synchronously visible.",
     "deferredProvider": "a stale read-back means take a fresh snapshot before retrying, not retry harder"
   },
   "refusals": {
-    "stale_element_token": { "reusable": false, "do": "re-observe; the element route still works" },
-    "background_unavailable": { "do": "re-issue that same action with delivery_mode foreground" },
-    "background_occluded": { "do": "re-observe or escalate" },
-    "background_uipi_blocked": { "do": "stop and ask the user; never bypass" },
-    "bounded_resource_outside_manifest": { "do": "widen the manifest deliberately, never silently" },
-    "authorization_required": { "do": "needs a launch grant or host decision" }
+    "stale_element_token": {
+      "reusable": false,
+      "do": "re-observe; the element route still works",
+      "observed": "verify-input, probe-policy-arguments, four separate scripts across two phases"
+    },
+    "capture_coordinate_invalid": {
+      "reusable": true,
+      "do": "check which of the THREE coordinate spaces you are in. A capture-bound pixel click is validated in the SCREENSHOT's pixel space, which is the window scaled to max_image_dimension. Pass max_image_dimension 0 for native pixels.",
+      "observed": "verify-phase4-pixel: with max_image_dimension 900 an 828x1064 window is downscaled to ~700x900 and window-local (718,1002) is refused as out of range"
+    },
+    "permission_denied": {
+      "do": "read the reason. Three different causes share this code: the tool is outside the manifest allow.tools, the tool is outside the policy allow list, or the tool has no reviewed risk classification.",
+      "observed": "probe-policy-enforcement (zoom, launch_app), probe-browser-dom (browser_screenshot: no reviewed risk classification), verify-bounded (get_browser_state under allow.tools)"
+    },
+    "bounded_resource_outside_manifest": {
+      "do": "widen the manifest deliberately, never silently. Also check WHICH executable owns the window: app scope matches the window-owning executable, not the one you launched.",
+      "observed": "verify-bounded, and Phase 4 where calc.exe did not authorise Calculator"
+    },
+    "authorization_required": {
+      "do": "needs a launch grant or a host decision",
+      "observed": "browser_prepare against a logged-in Chromium profile"
+    },
+    "browser_requires_setup": {
+      "do": "no owned endpoint exists. browser_prepare only PREPARES an endpoint; get_browser_state with the prepared browser's (pid, window_id) is what mints target_id and tab_id. Take the remedy the refusal names: allow_launch with an isolated profile.",
+      "observed": "probe-browser-dom, probe-existing-profile-grant, probe-xhs-public"
+    },
+    "foreground_unavailable": {
+      "do": "the Windows foreground lock refused activation from a process that does not own the current foreground window. Check whether a foreground window exists at all; on this host bring_to_front with AttachThreadInput also fails, so the pixel rung cannot complete.",
+      "observed": "probe-foreground-escalation, probe-uia-worker"
+    },
+    "tool_invocation_failed": {
+      "do": "the action did NOT take effect. Treat the accompanying Win32 text as unreliable: a background pixel click on a UIA-less app returns this code carrying S_OK (0x00000000) while nothing changes on screen.",
+      "observed": "verify-phase4-pixel, probe-foreground-escalation. The S_OK is the PostMessage return, not the click's effect."
+    },
+    "foreign_process_termination_denied": {
+      "do": "the driver refuses to kill a process it did not launch. Do not reach around it with Stop-Process: that is how this project destroyed the user's unsaved Notepad tabs.",
+      "observed": "cleanup-scratch, cleanup-windows"
+    },
+    "background_unavailable": {
+      "do": "re-issue that same action with delivery_mode foreground",
+      "observed": "not observed on this host; documented by the driver"
+    },
+    "background_occluded": {
+      "do": "re-observe or escalate",
+      "observed": "not observed on this host; documented by the driver"
+    },
+    "background_uipi_blocked": {
+      "do": "stop and ask the user; never bypass",
+      "observed": "not observed on this host; documented by the driver"
+    }
   },
   "windowsBackgroundSupport": {
     "$comment": "Empirical, from cua docs/action-support.md. This is an expectation table, NOT a selection table: always attempt background and let the driver refuse. 'unproven' means assume nothing either way.",
     "WPF": {
-      "supported": ["combo_selection", "left_click", "value_change", "px_left_click_uia_hittest"],
-      "refused": ["f5", "px_drag"]
+      "supported": [
+        "combo_selection",
+        "left_click",
+        "value_change",
+        "px_left_click_uia_hittest"
+      ],
+      "refused": [
+        "f5",
+        "px_drag"
+      ]
     },
     "WinUI3": {
-      "supported": ["control", "value", "selection", "popup", "slider"],
+      "supported": [
+        "control",
+        "value",
+        "selection",
+        "popup",
+        "slider"
+      ],
       "refused": [],
-      "unproven": ["background_right_click", "background_double_click"]
+      "unproven": [
+        "background_right_click",
+        "background_double_click"
+      ]
     },
     "Electron": {
-      "supported": ["left_click", "child_window"],
+      "supported": [
+        "left_click",
+        "child_window"
+      ],
       "refused": [
         "right_click",
         "double_click",
@@ -126,23 +233,59 @@
       "refusalCode": "background_unavailable"
     },
     "Tauri": {
-      "supported": ["left_click", "right_click", "double_click", "type_text", "press_key", "child_window"],
-      "refused": ["hotkey", "scroll_px", "drag_px"]
+      "supported": [
+        "left_click",
+        "right_click",
+        "double_click",
+        "type_text",
+        "press_key",
+        "child_window"
+      ],
+      "refused": [
+        "hotkey",
+        "scroll_px",
+        "drag_px"
+      ]
     },
     "WebView2": {
-      "supported": ["cdp_page_operations", "px_left_click_uia_hittest"],
+      "supported": [
+        "cdp_page_operations",
+        "px_left_click_uia_hittest"
+      ],
       "refused": [],
-      "unproven": ["native_keyboard", "pointer_beyond_left_click"]
+      "unproven": [
+        "native_keyboard",
+        "pointer_beyond_left_click"
+      ]
     }
   },
   "riskGates": {
     "irreversible": {
-      "triggers": ["send", "submit", "pay", "delete", "overwrite", "leave_machine"],
+      "triggers": [
+        "send",
+        "submit",
+        "pay",
+        "delete",
+        "overwrite",
+        "leave_machine"
+      ],
       "action": "question_before_proceeding"
     },
-    "secrets": { "detect": "password field present", "action": "refuse to type; ask the user" },
-    "integrity": { "detect": "target runs elevated", "action": "refuse" },
-    "staleness": { "triggers": ["stale_element_token", "session idle > 5 minutes"], "action": "re-observe" },
+    "secrets": {
+      "detect": "password field present",
+      "action": "refuse to type; ask the user"
+    },
+    "integrity": {
+      "detect": "target runs elevated",
+      "action": "refuse"
+    },
+    "staleness": {
+      "triggers": [
+        "stale_element_token",
+        "session idle > 5 minutes"
+      ],
+      "action": "re-observe"
+    },
     "maxAttemptsSameTarget": 2
   },
   "boundedMode": {
@@ -161,23 +304,70 @@
     "failsClosed": "no manifest, or a manifest without approval, refuses startup rather than degrading to standard"
   },
   "deprecated": {
-    "$comment": "Present in 0.34.0 but deprecated. Do not call.",
+    "$comment": "TOOLS present in 0.34.0 but deprecated. Do not call.",
     "escalate_session": "capture-scope legacy; scope is now explicit per call",
     "page": "legacy browser compatibility; use browser_prepare then browser_*",
-    "get_session_state": "alias; use get_session",
-    "capture_mode": "on get_window_state; deprecated AND ignored, choose modality at action time"
+    "get_session_state": "alias; use get_session"
   },
   "cheatSheet": [
-    { "see": "target in tree with an action", "do": "element_token, background", "avoid": "pixels" },
-    { "see": "text field in tree", "do": "set_value + token", "avoid": "type_text" },
-    { "see": "target only in screenshot", "do": "x,y + capture_id", "avoid": "expecting element routing" },
-    { "see": "any action", "do": "delivery_mode background first", "avoid": "preemptively foreground" },
-    { "see": "background_unavailable", "do": "re-issue same action as foreground", "avoid": "guessing from app type" },
-    { "see": "Chromium page", "do": "browser_prepare then browser_*", "avoid": "element or pixel routing" },
-    { "see": "effect unverifiable", "do": "observe again", "avoid": "assume success" },
-    { "see": "effect suspected_noop", "do": "re-locate", "avoid": "retry in place" },
-    { "see": "stale_element_token", "do": "re-observe", "avoid": "reuse the token" },
-    { "see": "background_uipi_blocked", "do": "stop and ask", "avoid": "finding a bypass" },
-    { "see": "two failed attempts", "do": "stop and report", "avoid": "more clicking" }
-  ]
+    {
+      "see": "target in tree with an action",
+      "do": "element_token, background",
+      "avoid": "pixels"
+    },
+    {
+      "see": "text field in tree",
+      "do": "set_value + token",
+      "avoid": "type_text"
+    },
+    {
+      "see": "target only in screenshot",
+      "do": "x,y + capture_id",
+      "avoid": "expecting element routing"
+    },
+    {
+      "see": "any action",
+      "do": "delivery_mode background first",
+      "avoid": "preemptively foreground"
+    },
+    {
+      "see": "background_unavailable",
+      "do": "re-issue same action as foreground",
+      "avoid": "guessing from app type"
+    },
+    {
+      "see": "Chromium page",
+      "do": "browser_prepare then browser_*",
+      "avoid": "element or pixel routing"
+    },
+    {
+      "see": "effect unverifiable",
+      "do": "observe again",
+      "avoid": "assume success"
+    },
+    {
+      "see": "effect suspected_noop",
+      "do": "re-locate",
+      "avoid": "retry in place"
+    },
+    {
+      "see": "stale_element_token",
+      "do": "re-observe",
+      "avoid": "reuse the token"
+    },
+    {
+      "see": "background_uipi_blocked",
+      "do": "stop and ask",
+      "avoid": "finding a bypass"
+    },
+    {
+      "see": "two failed attempts",
+      "do": "stop and report",
+      "avoid": "more clicking"
+    }
+  ],
+  "deprecatedParams": {
+    "$comment": "PARAMETERS, not tools. Kept apart because conflating them is how this table listed capture_mode as if it were a tool, and the checker caught that.",
+    "get_window_state.capture_mode": "deprecated AND ignored; choose modality at action time by passing an element_token or x,y"
+  }
 }

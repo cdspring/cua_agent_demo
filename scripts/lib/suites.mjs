@@ -140,6 +140,72 @@ export const SUITES = [
   { name: "listed-app", script: "probe-listed-app.mjs", class: "diagnostic", why: "is a manifest-listed launched app addressable" },
   { name: "driver-docs", script: "read-cua-docs.mjs", class: "diagnostic", why: "cross-check local docs against the driver's own MCP resources" },
   { name: "window-state-shape", script: "inspect-window-state.mjs", class: "diagnostic", why: "the shape of one get_window_state response" },
+
+  // ---------------------------------------------------------------- lifecycle
+  // These were operating the project rather than verifying a claim about the
+  // driver, so they had no entry and sat outside the index. check-convergence
+  // reported them as drift, which is what prompted registering them: an
+  // unlisted script still runs and still holds a finding, and nobody notices
+  // when it rots.
+  { name: "install", script: "install.mjs", class: "lifecycle", why: "idempotent installer into the detected global config and skills directory" },
+  { name: "doctor", script: "doctor-project.mjs", class: "lifecycle", why: "drift detection: version, paths, policy schema, live per-app capability" },
+  { name: "convergence", script: "check-convergence.mjs", class: "lifecycle", why: "how many MCP scripts still bypass the shared client, gating ones first" },
+  { name: "cleanup-scratch", script: "cleanup-scratch.mjs", class: "lifecycle", why: "safeKill demo: refuses an untracked window, closes only our own fixtures" },
+  { name: "cleanup-windows", script: "cleanup-windows.mjs", class: "lifecycle", why: "polite close for classic Win32 windows, orphan client sweep" },
+  { name: "phase2-legacy", script: "verify-phase2.mjs", class: "diagnostic", why: "the original Phase 2 daemon checks; superseded by mcp-handshake and bounded-mode" },
+  { name: "xhs-public-channel", script: "probe-xhs-public.mjs", class: "diagnostic", why: "measures whether the DOM rung carries content on a logged-out public SPA. Read-only, throwaway profile" },
 ]
 
+/** Suites that gate. A false PASS here is the expensive failure. */
+export const GATING = SUITES.filter((s) => s.class === "active")
+
 export const byClass = (c) => SUITES.filter((s) => s.class === c)
+
+/**
+ * Scripts that deliberately do NOT use the shared MCP client.
+ *
+ * Convergence is not a virtue in itself. Putting the harness behind a script that
+ * exists to test the harness would verify the abstraction instead of the thing
+ * under test. These are exempt, each for a stated reason, so that
+ * check-convergence.mjs reports an honest number rather than a flattering one.
+ */
+export const LOW_LEVEL_EXEMPT = {
+  "verify-mcp.mjs":
+    "This IS the handshake test. The harness's connect() performs initialize and " +
+    "notifications/initialized; wrapping it here would verify the harness's handshake " +
+    "rather than the raw protocol OpenCode will actually speak.",
+  "bisect-policy-schema.mjs":
+    "Measures whether the driver STARTS for a given policy file. Startup failure is " +
+    "the signal, and it is observed on process exit and stderr, not through a live client.",
+  "verify-phase2.mjs":
+    "Shells out to `cua-driver call`, not MCP. No harness applies.",
+
+  // -------------------------------------------------------------------------
+  // AUDITED, NOT MIGRATED. These are gating suites, so migrating them was the
+  // stated priority. The audit says migration buys them nothing:
+  //
+  //   verify-bounded   0 uses of element_token, 14 refusal comparisons against
+  //                    codes, 0 prose matches
+  //   probe-browser-dom 0 uses of element_token,  7 refusal comparisons against
+  //                    codes, 0 prose matches
+  //
+  // The two bug classes the harness exists to prevent are one-use token reuse
+  // (prevented by fresh()) and refusal matching on prose rather than codes
+  // (prevented by call().refusals). Neither script has either. Their remaining
+  // regexes match window app_name/title and the startup stdout line, not driver
+  // responses.
+  //
+  // Rewriting two currently-PASSING gates to satisfy a convergence metric, with
+  // no measured defect to fix, is the wrong trade: it risks a working gate for a
+  // number. Exempt with the evidence recorded, so the next person re-audits
+  // rather than either migrating blindly or trusting this note.
+  "verify-bounded.mjs":
+    "AUDITED 2026-10: 0 element_token uses and 0 prose refusal matches, so the two " +
+    "defects fresh() and refusals{} prevent cannot occur here. 14 assertions already " +
+    "compare structuredContent codes. Migrating a passing 21-check gate for a metric " +
+    "would risk it for nothing. Re-audit if it ever starts acting on elements.",
+  "probe-browser-dom.mjs":
+    "AUDITED 2026-10: 0 element_token uses and 0 prose refusal matches; 7 assertions " +
+    "already compare codes. Its one regex matches the URL under test, not a refusal. " +
+    "Same reasoning as verify-bounded.",
+}
