@@ -164,9 +164,18 @@ resources:
       windows: all
       terminate: driver_launched
 
-    # Chromium's renderer and GPU children are separate processes. Without these
-    # the agent can see the browser frame but not the page content.
-    - executable: C:\Program Files (x86)\Microsoft\Edge\Application\msedgewebview2.exe
+    # Edge's WebView2 runtime. NOTE the path is version-stamped
+    # (…\EdgeWebView\Application\154.0.4258.53\), so this entry breaks on every
+    # WebView2 update, same failure mode as the WindowsApps paths below.
+    #
+    # An earlier revision of this file claimed this entry was needed because
+    # "Chromium's renderer and GPU children are separate processes". That was
+    # wrong. Chromium's renderer children are msedge.exe itself, already covered by
+    # the entry above. msedgewebview2.exe is the WebView2 embedding runtime used by
+    # apps that host Edge, which Edge the browser does not spawn. The path in that
+    # revision did not exist at all; scripts/install.mjs caught that, and the wrong
+    # reasoning is recorded here so it is not repeated.
+    - executable: C:\Program Files (x86)\Microsoft\EdgeWebView\Application\154.0.4258.53\msedgewebview2.exe
       launch: false
       windows: all
       terminate: driver_launched

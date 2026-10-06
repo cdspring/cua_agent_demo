@@ -173,12 +173,42 @@ Aim at the centre of a target, never its edge.
   `background_uipi_blocked`. Ask the user; do not hunt for a way around it.
 - **Keyboard over mouse** when both work.
 
-## Deprecated — do not call
+## Deprecated and removed — do not call
 
-`escalate_session`, `page`, and `get_session_state` are deprecated in 0.34.0.
-The `capture_mode` parameter on `get_window_state` is deprecated **and
-ignored**; the modality is chosen at action time by whether you pass an
-`element_token` or `x,y`.
+**Deprecated in 0.34.0** (present, will be removed):
+`escalate_session`, `page`, `get_session_state`. The `capture_mode` parameter on
+`get_window_state` is deprecated **and ignored**; the modality is chosen at action
+time by whether you pass an `element_token` or `x,y`.
+
+**Removed by this project:** the `computer_act` tool. It was a general
+mouse-and-keyboard tool that typed into whatever window held focus, with no target
+binding and no read-back. `cua-driver` supersedes it on every axis. The plugin
+that used to register it now exposes only `computer_capture` and
+`computer_diagnose`, which cannot act. If you see `computer_act` in your tool
+list, the plugin is stale and needs reinstalling.
+
+## Do not call these, by name
+
+The driver advertises 59 tools. Most are for diagnosis, recording or platform
+oddities. Calling one of these is almost always a mistake.
+
+| Tool | Why not |
+|---|---|
+| `kill_app` | Terminates a process. A user application may hold unsaved work. Prefer closing one of your own scratch fixtures, and never an app you did not launch. |
+| `start_recording`, `stop_recording`, `history` | Starts writing a trajectory to disk. Not a task action. |
+| `install_extension`, `extension` | Installs signed third-party code. Never a task action. |
+| `parse_visual_regions` | Runs the AGPL-3.0 OmniParser model. Deliberately not installed. |
+| `cursor-theme` | Installs assets. Not a task action. |
+| `revoke` | Terminates other sessions. |
+| `page` | Deprecated, and its mutating routes need an explicit opt-in env var. |
+| `bring_to_front` | Breaks the no-foreground contract. Only after a real refusal, and it does not work on this host anyway. |
+| `browser_download`, `cua_browser_download` | Writes a file chosen by page content. Needs explicit approval and a named destination. |
+| `install_ffmpeg` | Installs a binary. |
+| `get_recording_state`, `get_agent_cursor_state`, `get_session`, `list_sessions` | Read-only but answer questions you are not asking. |
+| `page` mutations, `execute_javascript` | Page mutation is gated behind an opt-in; if you need it, the user must turn it on deliberately. |
+
+Prefer, in order: `get_window_state` to observe, `click` / `type_text` /
+`press_key` / `scroll` to act, `verify_state` to check.
 
 ## The driver's own docs are available
 

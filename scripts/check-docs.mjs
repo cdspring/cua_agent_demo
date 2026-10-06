@@ -70,6 +70,13 @@ const UNRELATED = new Set([
   "capture_coordinate_invalid", "foreground_unavailable", "tool_invocation_failed",
   "ax_tree_empty", "browser_requires_setup", "policy_constraints",
   "tool_invocation_failed", "foreign_process_termination_denied",
+  // The M7 do-not-call table names tools deliberately, in order to forbid them.
+  // Flagging those as unknown identifiers defeats the point of the table.
+  "start_recording", "stop_recording", "history", "install_extension", "extension",
+  "parse_visual_regions", "cursor-theme", "revoke", "install_ffmpeg",
+  "browser_download", "cua_browser_download", "get_recording_state",
+  "get_agent_cursor_state", "execute_javascript", "get_session", "list_sessions",
+  "list-tools", "list_apps",
 ])
 const suspects = [...mentioned].filter((m) => !REAL_TOOLS.has(m) && !UNRELATED.has(m) && /^[a-z][a-z0-9_]*$/.test(m))
 console.log("\nbackticked identifiers in docs that are neither real tools nor known noise:")

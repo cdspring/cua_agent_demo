@@ -315,19 +315,110 @@ reaching around it.
 - SKILL.md gained a **Step 0 feasibility gate** before look/locate/act/verify,
   and a "never terminate an app you did not launch" section.
 
-#### Left undone, honestly
+### Phase 6 — actually mounting it into OpenCode
 
-One window could not be closed: `mx-1791275619218-D.txt - Notepad`, pid 13300,
-our own scratch fixture from `probe-policy-matrix.mjs`. `kill_app` refused
-(`foreign_process_termination_denied`, correct); `alt+F4` returned ok and the
-window stayed; the window's own `关闭` button took the `PostMessage` path
-(`Performed PostMessage click`), which Notepad's XAML chrome drops; and the
-foreground escalation is blocked by the lock above. Per the skill's own rule —
-after two failed attempts on one target, stop and report — it is left for you to
-close by hand. **It is a scratch file in
-`%LOCALAPPDATA%\Temp\opencode\cu-output`, not anything of yours.**
+Everything above was a working system that **was not loaded**. Five phases of
+hand-built wiring, and the skill the whole project exists to teach was invisible
+to the model the entire time.
 
-Also still unproven: `set_value`'s success path, and `invoke_menu`.
+#### M1 — the skill was never loaded
+
+`/api/skill` lists every skill the running server has actually loaded. On this
+machine it returned eleven entries and `computer-use` was not among them. Three
+assumptions were wrong, all of them mine:
+
+| Assumption | Reality |
+|---|---|
+| the project `opencode.jsonc` is the config | `/api/config` reports **one** document: `~/.config/opencode/opencode.jsonc`. The project's copy is read by nobody. |
+| skills live beside the config | they live in **`~/.agents/skills/`**. `~/.config/opencode/skills` does not exist. |
+| the skill is loaded because it is on disk | a file on disk is not a loaded skill. |
+
+A skill file in the repo directory, with the server rooted at the home directory,
+is inert. It looked completely installed.
+
+#### M2–M3 — installation is now a command
+
+`scripts/lib/opencode-paths.mjs` probes all of the above rather than assuming it,
+and `scripts/install.mjs` performs the install. It is idempotent and prints what
+it changed. Current state: **5/5, and `/api/skill` reports `computer-use` loaded
+from `C:\Users\spring\.agents\skills\computer-use\SKILL.md`.**
+
+Four things it deliberately refuses to do, each for a reason that cost something:
+
+- **upgrade cua-driver** — a silent upgrade is what moved the Calculator to a new
+  owning executable and broke the closed-loop test;
+- **switch permission mode** — standard vs bounded is a trust decision;
+- **splice the MCP entry** — it is hand-edited jsonc with other entries in it, and
+  a bad splice is worse than a missing one; it prints the block to paste;
+- **rewrite manifest paths** — they carry hand-written warnings that a generator
+  would erase.
+
+#### M4 — the dead backend no longer looks alive
+
+`.opencode/plugins/computer-use.ts` used to register `computer_act`, a general
+mouse-and-keyboard tool that typed into whatever held focus. It is **removed**.
+The plugin now exposes only `computer_capture` and `computer_diagnose`, which
+cannot act, under names that say so at a glance. The action-only flag plumbing was
+removed with it — leaving `Button`, `ClickCount`, `Focus` and `Text` in a
+read-only tool would be a thin disguise.
+
+#### M5 — drift is now detected instead of discovered
+
+`scripts/doctor-project.mjs`. Everything in this project was true when written and
+silently stopped being true:
+
+- a Windows update made the Calculator undrivable with no error anywhere;
+- manifest paths carry version-stamped WindowsApps paths that break on update;
+- **one manifest entry pointed at a path that never existed, justified by
+  reasoning that was also wrong** — I claimed `msedgewebview2.exe` was needed
+  because "Chromium's renderer and GPU children are separate processes". They are
+  not; renderer children are `msedge.exe`. `msedgewebview2.exe` is the WebView2
+  embedding runtime, and the path was `…\EdgeWebView\Application\154.0.4258.53\`.
+  The doctor found the dead path; the false reasoning is now recorded next to it
+  so it is not repeated;
+- the skill was invisible.
+
+Current doctor output: one genuine problem, correctly reported — three apps
+expose no accessibility tree and the pixel fallback is blocked.
+
+The doctor also produced a false positive on its first run, by matching the word
+`required:` inside the comment explaining that `required` does not exist. It now
+strips comments before checking. A checker that cries wolf is worse than none.
+
+#### M6 — one of the two unproven paths is now proven
+
+`set_value` — **proven.** `Set AXValue on [0] (UIA ValuePattern)`, and the
+document read back as `"set_value wrote this"` with the seed gone, so it replaces
+rather than appends.
+
+`invoke_menu` — **still unproven, and now for a known reason.** It is reachable:
+under bounded it returned `permission_denied` (absent from the manifest's
+`allow.tools`), and under standard it returns a correct structured
+`menu_path_unavailable: menu path segment 0 was not found`. The problem is that
+**no application on this machine exposes an application menu bar.** charmap has
+one `MenuItem` labelled `系统`, which is the window's *system* menu; regedit
+exposes 1 element. Menu labels are also localised, so English paths never resolve.
+Modern Windows has retired the classic menu-bar apps and the survivors are XAML.
+
+#### M7 — an explicit do-not-call list
+
+The driver advertises 59 tools. SKILL.md now names the ones that are never a task
+action, with the reason for each: `kill_app`, the recording and history tools,
+`install_extension`, `parse_visual_regions`, `revoke`, `bring_to_front`,
+`browser_download`, and the page-mutation routes. This expresses the boundary in
+the skill rather than by narrowing the tool surface, which keeps the `standard`
+mode decision intact.
+
+#### Two windows left open, and they are mine
+
+| Window | Why it is still open |
+|---|---|
+| `注册表编辑器` (regedit, pid 27428) | opened to look for a menu bar; `kill_app` returned `foreign_process_termination_denied` |
+| `字符映射` (charmap, pid 22100) | opened for `invoke_menu`; same |
+
+Neither was open before this work. Both need closing by hand. `kill_app` refuses
+because the launching MCP child has exited — which is the same guard that would
+have prevented the original Notepad incident.
 
 ### Phase 4 — real tasks
 

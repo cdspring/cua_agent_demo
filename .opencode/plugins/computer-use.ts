@@ -5,21 +5,33 @@ import { fileURLToPath } from "node:url"
 import { Plugin } from "@opencode/plugin"
 
 /**
- * Computer-use tool layer.
+ * Legacy capture backend. READ-ONLY BY CONSTRUCTION.
  *
- * This plugin only *executes*. The judgement — when to look, how to find a
- * target, when a click is safe, whether the result matches the goal — lives in
- * the `computer-use` skill, which teaches the model to drive these tools as a
- * closed observe -> act -> verify loop.
+ * This plugin used to register `computer_act`, a general mouse-and-keyboard tool
+ * backed by SendInput. It is deliberately gone.
  *
- * All Win32 work is delegated to scripts/cu.ps1, which wraps SendInput and
- * BitBlt. PowerShell is the only thing on a stock Windows box that reaches
- * user32.dll without a compiler, and it keeps the native interop in one
- * auditable file instead of spread across this plugin.
+ * Why remove it rather than deprecate it:
  *
- * Screenshots come back as Tool.FileContent so the image reaches the model
- * directly; the JSON metadata rides alongside as text so the model keeps the
- * coordinate mapping it needs to act on what it just saw.
+ *   1. `cua-driver` supersedes it. `act` typed into whatever window held focus,
+ *      with no target binding and no read-back. That is exactly how this project
+ *      typed into a browser tab it did not mean to touch. The driver binds every
+ *      action to a window plus a one-use capture id and reports whether the write
+ *      applied; this plugin cannot do either.
+ *   2. A tool named `computer_act` reads as executable no matter what any
+ *      document says. Leaving it registered while telling the model not to use it
+ *      relies on the model cooperating with a comment. Removing it makes the
+ *      capability absent instead of discouraged.
+ *
+ * What remains is genuinely useful and genuinely read-only: an out-of-band
+ * screenshot and a text dump of desktop state. Both answer questions the driver's
+ * MCP surface does not, namely "what does the whole screen look like" and "what
+ * is the coordinate space", and neither can change anything.
+ *
+ * Names are `capture` and `diagnose` rather than `screenshot` and `screen` so that
+ * a glance at the tool list is enough to tell they do not act.
+ *
+ * All Win32 work is delegated to scripts/cu.ps1. PowerShell is the only thing on
+ * a stock Windows box that reaches user32.dll without a compiler.
  */
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -84,7 +96,15 @@ function runScript(flags: string[], signal?: AbortSignal): Promise<RunResult> {
   })
 }
 
-/** Map tool input onto cu.ps1 parameters. Undefined values are omitted. */
+/**
+ * Map read-only input onto cu.ps1 parameters.
+ *
+ * Only the flags these two tools need are wired. The previous version carried the
+ * full action surface — Button, ClickCount, Amount, Axis, DurationMs, Text, Key,
+ * Focus, MustBeFront — which existed solely for `computer_act`. Leaving them here
+ * would be a thin disguise: the flags would parse, just with nothing to drive
+ * them.
+ */
 function toFlags(action: string, input: Args): string[] {
   const flags: string[] = ["-Action", action]
   const add = (name: string, value: string | number | undefined) => {
@@ -109,34 +129,19 @@ function toFlags(action: string, input: Args): string[] {
     add("Y2", num(input.y2))
   }
 
-  add("Button", str(input.button))
-  add("ClickCount", num(input.clickCount))
-  add("Amount", num(input.amount))
-  add("Axis", str(input.axis))
-  add("DurationMs", num(input.durationMs))
-  add("DelayMs", num(input.delayMs))
-  add("SettleMs", num(input.settleMs))
-  add("Text", str(input.text))
-  add("Key", str(input.key))
-  add("Title", str(input.title))
-  add("Index", num(input.index))
-  add("Focus", str(input.focus))
-  // Maps to -MustBeFront: PowerShell 5.1 silently drops a script parameter
-  // named "Expect" when run via -File.
-  add("MustBeFront", str(input.expect))
   add("Format", str(input.format))
   add("MaxWidth", num(input.maxWidth))
   add("Quality", num(input.quality))
   add("Windows", num(input.windowLimit))
-
-  if (bool(input.foreground)) flags.push("-Foreground")
+  add("Title", str(input.title))
+  if (bool(input.wholeDesktop)) flags.push("-WholeDesktop")
   return flags
 }
 
 /**
- * A failed action must not look like a successful one that changed nothing;
- * that ambiguity is what makes an agent retry blindly. Failures are returned as
- * explicit text stating that nothing changed.
+ * A failed capture must not look like a successful one that changed nothing.
+ * These tools cannot change anything, so the wording says what is actually true:
+ * the capture failed and no image exists.
  */
 function toContent(result: RunResult, opts: { screenshot?: boolean } = {}) {
   const { json, stderr, code } = result
@@ -155,9 +160,7 @@ function toContent(result: RunResult, opts: { screenshot?: boolean } = {}) {
     const reason = json?.error ?? stderr.trim() ?? `exit code ${code}`
     body.push({
       type: "text" as const,
-      text:
-        `Action failed: ${reason}\n` +
-        `Nothing was changed. Look again with computer_screenshot or computer_screen before retrying.`,
+      text: `Capture failed: ${reason}\nNo image was produced. Use cua-driver get_window_state for a per-window capture.`,
     })
     return body
   }
@@ -166,30 +169,17 @@ function toContent(result: RunResult, opts: { screenshot?: boolean } = {}) {
   return body
 }
 
-/** Map the model's action verb onto a cu.ps1 action plus any extra parameters. */
-function resolveAction(requested: string): { action: string; extra: (a: Args) => string[] } {
-  switch (requested) {
-    case "double_click":
-      return { action: "click", extra: () => ["-ClickCount", "2"] }
-    case "right_click":
-      return { action: "click", extra: () => ["-Button", "right"] }
-    case "middle_click":
-      return { action: "click", extra: () => ["-Button", "middle"] }
-    default:
-      return { action: requested, extra: () => [] }
-  }
-}
-
 const COORDINATE_NOTE =
   "Coordinates are Windows virtual-desktop space: the origin is the top-left of the " +
   "leftmost/topmost monitor, so x and y may be negative. Convert pixels in a returned " +
-  "image to screen coordinates by dividing by `scale` and adding the region origin."
+  "image to screen coordinates by dividing by `scale` and adding the region origin. " +
+  "Note this differs from cua-driver's window-local screenshot pixels."
 
 export default Plugin.define({
-  id: "computer-use.tools",
+  id: "computer-use.legacy-capture",
   async setup(ctx) {
     if (!existsSync(SCRIPT)) {
-      console.error(`[computer-use] action script missing at ${SCRIPT}; tools disabled`)
+      console.error(`[computer-use] legacy capture script missing at ${SCRIPT}; tools disabled`)
       return
     }
 
@@ -198,15 +188,18 @@ export default Plugin.define({
     await ctx.tool.transform((editor) => {
       editor.namespace({
         name: "computer",
-        description: "Drive the Windows desktop: capture the screen, control the mouse and keyboard.",
+        description:
+          "Read-only desktop inspection. These two tools cannot click, type, or change anything. " +
+          "For any action, use the cua-driver MCP tools instead.",
       })
 
       editor.add({
-        name: "screenshot",
+        name: "capture",
         description:
-          "Capture the active window and return it as an image. This is the first step of every " +
-          "interaction: look before you act. Use it again after acting to check the result. " +
-          "Prefer a small `region` when you already know roughly where the target is. " +
+          "Capture a region or the active window as an image. Read-only. Use it to see the whole " +
+          "screen when you need context the driver's per-window capture omits, such as a dialog " +
+          "that is not the target window. It cannot act. For a single window prefer cua-driver " +
+          "get_window_state, which returns the control tree alongside the image. " +
           COORDINATE_NOTE,
         input: {
           type: "object",
@@ -223,17 +216,12 @@ export default Plugin.define({
               required: ["x", "y", "width", "height"],
               additionalProperties: false,
             },
-            foreground: {
-              type: "boolean",
-              description:
-                "Capture only the active window. This is already the default; kept for explicitness.",
-            },
             wholeDesktop: {
               type: "boolean",
               description:
                 "Capture every display instead of the active window. Costs several times more " +
                 "image tokens and includes unrelated windows, so ask for it only when the target " +
-                "spans displays or the active window is not what you need.",
+                "spans displays.",
             },
             maxWidth: {
               type: "number",
@@ -247,28 +235,25 @@ export default Plugin.define({
         options: { namespace: "computer" },
         execute: async (input, context) => {
           const args = input as Args
-          const format = str(args.format) ?? "jpeg"
-          // The script defaults to the active window; only an explicit request
-          // widens the capture to every display.
-          const wholeDesktop = bool(args.wholeDesktop)
-          const flags = toFlags("screenshot", {
-            ...args,
-            maxWidth: args.maxWidth ?? maxWidth,
-            format,
-            quality: args.quality ?? 78,
-          })
-          if (wholeDesktop) flags.push("-WholeDesktop")
-          const result = await runScript(flags, context.signal)
+          const result = await runScript(
+            toFlags("screenshot", {
+              ...args,
+              maxWidth: args.maxWidth ?? maxWidth,
+              format: str(args.format) ?? "jpeg",
+              quality: args.quality ?? 78,
+            }),
+            context.signal,
+          )
           return { content: toContent(result, { screenshot: true }) as any }
         },
       })
 
       editor.add({
-        name: "screen",
+        name: "diagnose",
         description:
           "Read desktop state as text with no image cost: monitors, virtual screen bounds, " +
-          "cursor position, the active window, or the list of open windows. Use it to learn the " +
-          "coordinate space and to find a window by the exact title you will pass to `focus`. " +
+          "cursor position, the active window, or the list of open windows. Read-only. Use it to " +
+          "learn which coordinate space you are in before acting with cua-driver. " +
           COORDINATE_NOTE,
         input: {
           type: "object",
@@ -286,72 +271,6 @@ export default Plugin.define({
           const args = input as Args
           const action = bool(args.windows) ? "windows" : "info"
           const result = await runScript(toFlags(action, args), context.signal)
-          return { content: toContent(result) as any }
-        },
-      })
-
-      editor.add({
-        name: "act",
-        description:
-          "Perform one mouse or keyboard action. Follow a computer_screenshot with this, then " +
-          "verify with another screenshot; never fire several actions blind. Pass `focus` to " +
-          "activate a window by title before acting, and `expect` to abort unless that window is " +
-          "in front. Always pass both when the action types text or submits something. " +
-          COORDINATE_NOTE,
-        input: {
-          type: "object",
-          properties: {
-            action: {
-              type: "string",
-              enum: [
-                "click",
-                "double_click",
-                "right_click",
-                "middle_click",
-                "move",
-                "drag",
-                "scroll",
-                "type",
-                "key",
-                "wait",
-              ],
-              description:
-                "click/move/scroll accept x and y. drag needs x,y then x2,y2. scroll takes amount, " +
-                "positive is down. type needs text. key needs key, such as 'enter', 'escape' or 'ctrl+s'.",
-            },
-            x: { type: "number" },
-            y: { type: "number" },
-            x2: { type: "number" },
-            y2: { type: "number" },
-            button: { type: "string", enum: ["left", "right", "middle"] },
-            clickCount: { type: "number", description: "1-5, where 2 is a double click." },
-            amount: { type: "number", description: "Scroll wheel ticks. Positive scrolls down." },
-            axis: { type: "string", enum: ["vertical", "horizontal"] },
-            durationMs: { type: "number", description: "Drag duration. Longer is more reliable for drop targets." },
-            delayMs: { type: "number", description: "Delay between keystrokes. Raise it for slow apps." },
-            settleMs: { type: "number", description: "Hold time between mouse button down and up." },
-            text: { type: "string", description: "Text for `type`. Unicode, including CJK, is supported." },
-            key: { type: "string", description: "Key or combo for `key`: 'enter', 'escape', 'ctrl+s', 'alt+tab'." },
-            waitMs: { type: "number", description: "For `wait`: milliseconds to pause, for UI to settle." },
-            focus: {
-              type: "string",
-              description: "Activate the window whose title contains this first. Verified, not assumed.",
-            },
-            expect: {
-              type: "string",
-              description: "Abort unless the foreground title contains this. Stops text reaching the wrong app.",
-            },
-          },
-          additionalProperties: false,
-        },
-        options: { namespace: "computer" },
-        execute: async (input, context) => {
-          const args = input as Args
-          const { action, extra } = resolveAction(str(args.action) ?? "click")
-          const flags = toFlags(action, args)
-          if (action === "wait") flags.push("-DurationMs", String(num(args.waitMs) ?? 500))
-          flags.push(...extra(args))
-          const result = await runScript(flags, context.signal)
           return { content: toContent(result) as any }
         },
       })
