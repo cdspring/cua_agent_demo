@@ -25,7 +25,20 @@
     "servers": {
       "cua": {
         "type": "local",
-        "command": ["cua-driver", "mcp"],
+        "$comment": [
+          "Absolute path: the installer does not add cua-driver to PATH, so the bare",
+          "name would fail to launch. Confirmed at C:\\Users\\spring\\AppData\\Local\\",
+          "Programs\\cua\\cua-driver\\bin\\cua-driver.exe (v0.34.0).",
+          "`mcp` owns the runtime in this process and exits on stdin EOF, which is",
+          "what OpenCode expects. Use `mcp --socket <endpoint>` to reach a separately",
+          "configured `serve` daemon instead.",
+          "",
+          "Set disabled:false after reading Phase 2 in the README."
+        ],
+        "command": [
+          "C:\\Users\\spring\\AppData\\Local\\Programs\\cua\\cua-driver\\bin\\cua-driver.exe",
+          "mcp"
+        ],
         "disabled": true,
         "codemode": false,
         "environment": {
@@ -35,7 +48,10 @@
             "reviewed; it requires the manifest AND its approval together.",
             "  CUA_DRIVER_PERMISSION_MODE=bounded",
             "  CUA_DRIVER_CAPABILITY_MANIFEST_FILE=<abs path>/config/cua-bounded.yaml",
-            "  CUA_DRIVER_CAPABILITY_MANIFEST_APPROVED=1"
+            "  CUA_DRIVER_CAPABILITY_MANIFEST_APPROVED=1",
+            "",
+            "Windows needs no OS-level accessibility grant; doctor reported the",
+            "interactive session and UIA as OK."
           ],
           "CUA_DRIVER_PERMISSION_MODE": "standard"
         }
@@ -47,8 +63,8 @@
     { "$comment": "Observation is cheap and repeated; never prompt for it.", "action": "cua-driver_get_*", "resource": "*", "effect": "allow" },
     { "action": "cua-driver_list_*", "resource": "*", "effect": "allow" },
     { "action": "cua-driver_screenshot", "resource": "*", "effect": "allow" },
-    { "action": "cua-driver_wait", "resource": "*", "effect": "allow" },
     { "action": "cua-driver_start_session", "resource": "*", "effect": "allow" },
+    { "$comment": "There is no cua-driver wait/sleep tool in 0.34.0. Pause with the shell `sleep`, or with wait_ms on type_text / timeout_ms on get_window_state.", "action": "cua-driver_verify_state", "resource": "*", "effect": "allow" },
 
     { "$comment": "Anything that changes the machine asks first.", "action": "cua-driver_click", "resource": "*", "effect": "ask" },
     { "action": "cua-driver_type_text", "resource": "*", "effect": "ask" },

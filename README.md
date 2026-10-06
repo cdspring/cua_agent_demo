@@ -170,17 +170,19 @@ capture is available but costs several times more image tokens and includes
 unrelated windows, so it is opt-in.
 | L3 | Addressing | **AX → PX → page → foreground** |
 | L4 | Delivery | background, escalate only on refusal |
-| L5 | Verification | only `effect: confirmed` is success |
+| L5 | Verification | `confirmed` is not the task outcome; check the postcondition |
 | L6 | Risk | permissions, irreversible, secrets, integrity |
 
 L3 order matters: `page` sits **above** `px`, so a pixel failure in a browser
 escalates to the DOM, not to foreground.
 
-L5 is the layer that makes this trustworthy. A delivered event is not an
-applied change — Electron and web content can echo a write they never applied,
-so the driver reports `unverifiable` rather than `confirmed`. Treat the other
-four outcomes (`unverifiable`, `suspected_noop`, `partial`, `refused`) as
-"observe again".
+L5 is the layer that makes this trustworthy. **Action facts are not task
+outcomes** — `effect: confirmed` means only that readable state exists, and the
+task postcondition still needs separate checking. Treat `unverifiable`,
+`suspected_noop`, `partial` and `refused` as *unknown*, not *failed*, and
+confirm by re-observing. Use `verify_state` for expressible postconditions; its
+`unknown` result is not success. Never replay a cancelled or unknown action
+automatically: an interrupted transport may already have delivered it.
 
 ## Known limits
 
@@ -197,6 +199,61 @@ Windows, from the driver's own `docs/action-support.md`:
 Do not install the optional `cua-perception` extension: it bundles an
 AGPL-3.0-only OmniParser artifact, and network distribution would trigger
 source obligations.
+
+## Verification
+
+Run on this machine against cua-driver 0.34.0.
+
+| Check | Result |
+|---|---|
+| `doctor` | all green: interactive session 3, UIA available, 13 windows |
+| MCP handshake over stdio | protocolVersion 2025-06-18, 59 tools, clean exit on stdin EOF |
+| Registered in OpenCode | `{"name":"cua","status":"connected"}` |
+| Element-level AX click | `route: accessibility`, state changed, **real cursor unmoved, z-index unchanged** |
+| Pixel click + `capture_id` | dispatches with window-local coordinates, same result |
+| `type_text` on a real edit field | **`effect: confirmed`**, document changed, cursor unmoved, window not raised |
+| `press_key` | dispatches via `synthetic_events`, `effect: unverifiable` |
+| `launch_app` hidden | launched without stealing focus |
+
+Not yet proven: the `set_value` success path, `background_unavailable` →
+foreground escalation (needs an Electron host), `bounded` mode, `invoke_menu`.
+
+### Facts the official docs do not state
+
+- Element `frame` is **desktop** pixels; a pixel action carrying `capture_id`
+  must use **window-local** pixels (`local = frame - window_bounds.origin`).
+  Passing the desktop value is refused with `capture_coordinate_invalid`.
+- `capture_id` is optional; omitting it routes through `synthetic_events`.
+- There is **no `wait` tool** in 0.34.0.
+- `click` needs `pid` even when `element_token` is supplied, despite the schema.
+- Every one-shot `cua-driver call` gets a **disposable session**, so
+  `element_token` and `capture_id` do not cross the process boundary. Pass one
+  `session` label across a multi-step interaction; a long-lived MCP connection
+  is unaffected.
+- **Action facts are not task outcomes.** On WinUI3 Calculator both a button AX
+  click and a pixel click returned `unverifiable` while demonstrably changing
+  state, so `unverifiable` means *unknown*, not *failed*.
+- Control labels are localised: Calculator's keypad is `一 二 三 …`.
+
+**Windows caveat that bit twice:** PowerShell 5.1 strips quotes from
+multi-field positional JSON argv, so `cua-driver call` must be driven from Node
+or PowerShell 7+. Every script under `scripts/` is Node for that reason.
+
+### Scripts
+
+| Script | Purpose |
+|---|---|
+| `verify-mcp.mjs` | MCP handshake, tool inventory, checks routing.md names only real tools |
+| `verify-phase2.mjs` | Element click with cursor/focus side-effect assertions |
+| `verify-input.mjs` | `type_text` / `set_value` / `press_key` against a real edit field |
+| `verify-coords.mjs` | Desktop vs window-local coordinate conversion |
+| `verify-actions.mjs` | `capture_id`, foreground delivery, restoration |
+| `check-docs.mjs` | Validates the decision table; flags stale tool names in the docs |
+| `read-cua-docs.mjs` | Downloads the driver's own MCP resources for cross-checking |
+
+The driver publishes its own documentation as MCP resources —
+`skill://cua-driver/WINDOWS.md`, `WORKFLOW.md`, `SKILL.md`, `VISUAL.md` and
+seven more. Prefer them over this repository when the two disagree.
 
 ## References
 

@@ -1,28 +1,30 @@
 # Routing: how to choose a path for each step
 
 Seven layers. Each layer can only *narrow* the path; the verification layer
-(L5) decides whether to escalate. Read L0–L2 once, then consult L3–L5 per
-action.
+(L5) decides whether to escalate.
+
+**Verified against cua-driver 0.34.0 on Windows.** Where this file and the
+driver's own docs disagree, the driver is right. Re-check with
+`cua-driver list-tools` and `cua-driver describe <tool>` after an upgrade.
 
 ## L0 — Is there a better interface than the mouse?
 
-Cheapest rule in the whole system. Qwen-CUA §4.3 measured this: adding a Bash
-tool shortened trajectories (63.6 → 49.1 turns) but *dropped* accuracy
-(58.7 → 55.1) because the model could not route reliably. Prefer interfaces,
-but do not pretend mouse work is free.
+Qwen-CUA §4.3 measured this: adding a Bash tool shortened trajectories
+(63.6 → 49.1 turns) but *dropped* accuracy (58.7 → 55.1) because routing was
+unreliable. Prefer interfaces, but mouse work is not free.
 
 | The task is | Use | Because |
 |---|---|---|
 | Files, git, processes, search | `shell` | Exact, verifiable, reversible |
-| Anything inside a web page | `browser` namespace (CDP) | A DOM exists; do not use pixels |
+| Inside a web page | `browser_prepare` → `get_browser_state` → `browser_*` | A DOM exists; do not use pixels |
 | A native desktop GUI app | L1+ | Below |
-| Canvas, games, custom-drawn UI | L1, expect AX to fail | No structured state exists |
+| Canvas, games, custom-drawn UI | L1, expect element routing to fail | No structured state |
 
 ## L1 — Which backend
 
-| | cua-driver | cu.ps1 (this repo) |
+| | cua-driver 0.34.0 | cu.ps1 (this repo) |
 |---|---|---|
-| Moves the real mouse | No — agent cursor overlay, excluded from capture via `WDA_EXCLUDEFROMCAPTURE` (Win10 2004+) | Yes |
+| Moves the real mouse | No — per-session agent cursor overlay | Yes |
 | Self-verifying | `effect` + accessibility read-back | Reports only "sent" |
 | Addressing | `element_token`, pixels, DOM | Pixels only |
 | Target binding | one-use `capture_id` | "Whatever is focused" |
@@ -30,93 +32,158 @@ but do not pretend mouse work is free.
 | Dependency | installed binary | none, PowerShell only |
 
 **Once cua-driver is available, `cu.ps1` must not be used for input actions.**
-Its `type` lands on the current foreground window, which is exactly the
-mistake this project already made once. Keep `cu.ps1` for offline capture and
-diagnosis.
+Its `type` lands on the focused window with no target binding, which is how
+this project typed into a browser tab during development. Keep it for offline
+capture and diagnosis.
 
 ## L2 — What to observe
 
 | Call | Returns | Use when |
 |---|---|---|
-| `list_windows` | pid, window_id, titles | Locating a target. Zero image tokens. |
-| `get_desktop_state` | whole display + elements | Target unknown |
-| `get_window_state` | that window's tree + screenshot | **Default entry point** |
-| `get_accessibility_tree` | tree only | Elements only, no image |
-| `get_window_state` + `include_screenshot:false` | tree only | Re-indexing after a layout change |
+| `get_accessibility_tree` | processes + visible windows, cheap | Discovery. Fast, no screenshot |
+| `list_windows` | every top-level window, with `z_index` and `minimized` | Discovery |
+| `get_window_state` | **tree AND screenshot together** | **Default entry point** |
+| `get_desktop_state` | whole display | Target spans displays |
+| `get_window_state` + `include_screenshot:false` | tree only | Re-indexing cheaply |
+| `get_window_state` + `include_accessibility_tree:false` | screenshot only | Live preview, no tree needed |
+| `zoom` | region at native resolution | Small target in a large window |
+| `get_screen_size` | display size and scale | Before desktop-scope pixels |
+| `set_window_frame` | exact geometry, verified | Moving or resizing a window |
+| `invoke_menu` | native menu path | Menu-bar commands |
+| `clipboard_read` / `clipboard_write` | clipboard contents | Text transfer that beats typing |
 
-Bound cost with `max_elements` and `max_depth`, reuse `pid`/`window_id`, and
-batch text into one `type_text`. Measured on their Calculator example, this cut
-uncached input from 71,088 to 12,251 tokens.
+**There is no `wait` tool in 0.34.0.** Pause with `shell`'s `sleep`, or bound an
+existing call: `type_text` has `delay_ms`, `get_window_state` has `timeout_ms`,
+`scroll` has `amount`.
 
-## L3 — Addressing ladder
+`get_window_state` returns both modalities in one call. `capture_mode` is
+deprecated and ignored — the modality is chosen **at action time** by whether
+you pass an `element_token` (accessibility) or `x,y` (pixel).
 
-Order matters: **AX → PX → page → foreground**. `page` sits above `px`, so a
-pixel failure in a browser escalates to the DOM, not to foreground.
+Cost control: `max_elements` (default 5000), `max_depth` (default 25),
+`max_image_dimension`, and `query` to project to matching rows plus ancestors.
+A Chromium tree is ~5000 elements and returns in 2–3s. Their Calculator example
+cut uncached input from 71,088 to 12,251 tokens with these bounds.
 
-| Rung | Target | Windows mechanism | When |
-|---|---|---|---|
-| AX | `element_token` | UIA Invoke | Target is in the tree and exposes an action |
-| PX | `x, y` + the observation's `capture_id` | Window message / cursor | Target is only visible, or the field needs a real focus click |
-| page | Browser tab binding | CDP | DOM exists |
-| foreground | Delivery mode | Raise, input, restore | Rungs above refuse |
+## L3 — Addressing
 
-A pixel-derived click must carry the same one-use `capture_id` as the
-observation that produced the coordinates. For keyboard tools, `x, y` first
-clicks to give the field renderer focus — that is how you type into Chromium
-and Electron inputs.
+| Rung | Pass | Mechanism |
+|---|---|---|
+| Element | `element_token` | UIA Invoke / ValuePattern |
+| Element, value only | `set_value` + `element_token` | UIA ValuePattern, read back |
+| Pixel | `x`, `y` + the observation's `capture_id` | Window message / cursor |
+| Page | `browser_prepare` → `browser_*` | CDP against an exactly-bound tab |
+| Foreground | `delivery_mode: "foreground"` | Raise, input, restore |
 
-## L4 — Background or foreground
+`element_token` matches `^s[0-9a-f]{8}:[0-9]+$` and comes from
+`structuredContent.elements[].element_token`.
 
-Background delivery does not raise the window, move the pointer, or change the
-frontmost app.
+**Tokens are invalidated by the next snapshot of the same `(pid, window_id)`.**
+The replacement response lists the old ids in `invalidated_snapshot_ids`. Take
+one `get_window_state` per turn per window before any element action.
 
-Windows background reality, from `docs/action-support.md` (empirical, not
-promised):
+### Two coordinate spaces
+
+This is the most reliable way to get a `capture_coordinate_invalid` refusal:
+
+| Source | Space |
+|---|---|
+| `element.frame` | **Desktop** absolute pixels |
+| `x,y` with `capture_id` | **Window-local** screenshot pixels |
+| `x,y` with `scope: "desktop"` | Screen pixels |
+
+`local = frame - window_bounds.origin`. Verified: element frame
+`{x:1529,y:390,w:64,h:64}` with window origin `(779,309)` became local
+`(782,113)`, which dispatched; the desktop value `(1561,422)` was refused.
+
+`capture_id` is **optional**. Omitting it still works and routes through
+`synthetic_events`; supplying it admits the coordinates against that exact
+capture. Element `frame` values are always desktop coordinates.
+
+## L4 — Delivery: background first, always
+
+`delivery_mode` defaults to `background`, which never raises the window, moves
+the real pointer, or changes the frontmost app.
+
+> **The driver is explicit: background is the mandatory first attempt. Do NOT
+> pass `foreground` preemptively because a target "looks like" GTK, Chromium or
+> Electron.** The driver decides when background is impossible and returns
+> `background_unavailable`. Only then re-issue that same action as foreground.
+> Fronting up-front needlessly steals the user's focus and is a bug, not a
+> shortcut.
+
+So: try background, read `effect`, escalate only on a real refusal.
+
+Windows background reality, from the driver's `docs/action-support.md`
+(empirical, not promised):
 
 | Host | Background works | Background refuses |
 |---|---|---|
 | WPF | Combo selection, left click, value changes, PX left click via UIA hit-testing | F5, PX drag |
 | WinUI3 | Control, value, selection, popup, slider | Right and double click unproven |
-| Electron | Left click, child windows | Right/double click, drag (`background_occluded`); **`type_text`, `press_key`, `hotkey`, `scroll` all `background_unavailable`** |
+| Electron | Left click, child windows | Right/double click, drag (`background_occluded`); `type_text`, `press_key`, `hotkey`, `scroll` → `background_unavailable` |
 | Tauri | Clicks, type, keys, child windows | `hotkey`, `scroll` PX, drag PX |
 | WebView2 | CDP page operations | Native keyboard and broader pointer unproven |
 
-**Consequence: Electron on Windows cannot take background typing.** Expect
-foreground for those hosts and skip the wasted background attempts.
+This table tells you what to expect. It is **not** a list of what to choose.
+Choose background; let the driver refuse.
 
-## L5 — Verification state machine
+## L5 — Verification
 
-A delivered event is not an applied change. Electron, Catalyst, and web content
-can echo a write they did not apply, so the driver reports those as
-`unverifiable` rather than `confirmed`.
+**Action facts are not task outcomes.** This is the single most important rule
+in the layer, and the driver's own `WORKFLOW.md` states it directly: even
+`effect: confirmed` means only "the action has publishable readback — still
+check the task postcondition".
 
-| `effect` | Meaning | What to do |
-|---|---|---|
-| `confirmed` | Read back through accessibility; `verified: true` | Proceed |
-| `unverifiable` | Delivered, no read-back available | **Observe again.** Do not assume success. |
-| `suspected_noop` | Nothing changed | Observe again, re-locate the target |
-| `partial` | Some of it applied | Observe and reconcile |
-| `refused` | Blocked before dispatch | Read `code` |
+| `effect` | Meaning for the next decision |
+|---|---|
+| `confirmed` | Publishable readback exists. **Still verify the task postcondition.** |
+| `unverifiable` | Delivery cannot prove effect. Observe before retrying. |
+| `suspected_noop` | Evidence suggests no useful change |
+| `partial` | Only the delivered portion landed. Inspect before repairing. |
+| `refused` | The route deliberately did not deliver |
 
-Refusal codes:
+| `route` | Actuator class |
+|---|---|
+| `accessibility` | UIA Invoke / ValuePattern |
+| `synthetic_events` | Posted window messages |
+| `global_input` | System-wide injected input |
+| `dom` | CDP against a bound tab |
+| `trusted_input` | Browser-trusted pointer input |
 
-| Code | Meaning | Do not |
-|---|---|---|
-| `stale_element_token` | Snapshot expired | Reuse the token. Re-observe; the element route is fine. |
-| `background_unavailable` | This host cannot take that shape in background | Retry only that action as foreground |
-| `background_occluded` | Target is covered | Re-observe or escalate |
-| `background_uipi_blocked` | Target runs elevated | Look for a workaround. Ask the user instead. |
-| `session_ended` | Session expired (5 idle minutes) | `start_session` again |
-| `bounded_resource_outside_manifest` | Outside `bounded` scope | Widen the manifest deliberately, not silently |
+`escalation` is a **suggestion, never authorization and never an automatic
+retry**: `target` is `pixel`, `foreground` or `page`; `reason` is
+`route_unavailable`, `delivery_failed`, `effect_unconfirmed`,
+`suspected_noop` or `permission_required`.
 
-Every response may carry `escalation: {recommended: "px" | "page" | "foreground",
-reason}`. Follow it. Do not improvise the next rung.
+Observed on Windows 0.34.0: a Calculator button and a Calculator pixel click both
+returned `unverifiable` while demonstrably changing state, whereas `type_text`
+on a real Notepad `Document` returned `confirmed` via `accessibility`. Treat
+`unverifiable` as "unknown", not "failed", and confirm by re-observing.
 
-**Only `confirmed` counts as success.**
+For an expressible postcondition, `verify_state` is the right tool. Predicates
+return `satisfied`, `unsatisfied` or `unknown`, with `unknown_reason` naming
+ambiguous matches, untrusted web state, or too few stable samples.
+**`unknown` is not success.** Text inside web content stays `unknown` with
+`untrusted_source`; read it from a fresh snapshot instead.
+
+### Never replay automatically
+
+Never replay a cancelled, partial or unknown action. An interrupted transport
+may have delivered input before losing its response, so a retry can duplicate
+it. Report the interruption and take fresh state first.
+
+For text, `unverifiable` specifically means: take a fresh snapshot before
+retrying, because a deferred provider can publish *after* the call returns and
+an immediate retry may type the text twice.
+
+When the postcondition is satisfied, stop acting. For media, selection is not
+playback — check the title and elapsed progress. For a close request, verify
+the window actually disappeared. State only what the evidence proves.
 
 ## L6 — Risk gates
 
-Every action clears all of these, in this order. Each can only narrow.
+Every action clears all of these, in order. Each can only narrow.
 
 1. Hard invariants (self-targeting, protected hosts)
 2. Built-in tool and risk map
@@ -126,16 +193,16 @@ Every action clears all of these, in this order. Each can only narrow.
 6. Capability manifest — required in `bounded`
 7. Launch grant or host decision
 
-On top of that, in the agent layer:
+Agent layer, on top:
 
 | Gate | Test | Action |
 |---|---|---|
 | OpenCode permission | Read-only `allow`; state-changing `ask` | Prompt per action |
 | Cua mode | `standard` allows input to **any** app | Move to `bounded` once stable |
-| Irreversible | send, submit, pay, delete, overwrite, leave the machine | `question` first |
-| Secrets | Password field appeared | Do not type. Ask the user. |
-| Integrity | Target is elevated | Refuse; do not attempt to bypass |
-| Staleness | `stale_element_token`, or >5 min idle | Re-observe |
+| Irreversible | send, submit, pay, delete, overwrite | `question` first |
+| Secrets | Password field present | Do not type. Ask the user. |
+| Integrity | Target is elevated | Refuse; do not bypass |
+| Staleness | `stale_element_token`, or 5 min idle | Re-observe |
 
 ## Loop
 
@@ -145,38 +212,46 @@ task
     └─ no
        └─ L1 cua-driver available?
           ├─ no ──> cu.ps1 for capture only, never input
-          └─ yes ──> L2 observe (tree + screenshot)
-                       └─ L3 target in tree?
-                          ├─ yes ──> AX
-                          ├─ browser ──> page
-                          └─ neither ──> PX + capture_id
-                             └─ L4 background supported?
-                                ├─ yes ──> deliver
-                                └─ no  ──> structured refusal
+          └─ yes ──> L2 observe (get_window_state: tree + screenshot)
+                       └─ L3 target in the tree?
+                          ├─ yes ──> element_token  (or set_value)
+                          ├─ browser ──> browser_*
+                          └─ neither ──> x,y + capture_id
+                             └─ L4 delivery_mode background (ALWAYS FIRST)
+                                ├─ delivered ──> L5 read effect
+                                └─ background_unavailable ──> same action, foreground
                                    └─ L5 effect
                                       ├─ confirmed ──> done
-                                      └─ else ──> observe again,
-                                                follow escalation
-                                                 └─ L6 gates ──> deliver
+                                      └─ else ──> observe again
+                                                └─ L6 gates ──> deliver
 ```
+
+## Deprecated in 0.34.0 — do not use
+
+| Tool | Status | Use instead |
+|---|---|---|
+| `escalate_session` | Deprecated compatibility tool | Nothing. It was capture-scope; scope is now explicit per call |
+| `page` | Legacy browser compatibility | `browser_prepare` → `browser_*` |
+| `get_session_state` | Deprecated alias | `get_session` |
+| `capture_mode` on `get_window_state` | Deprecated **and ignored** | Choose modality at action time |
 
 ## Cheat sheet
 
 | You see | Do this | Not this |
 |---|---|---|
-| Target in tree with an action pattern | AX, background | Pixels |
-| Target only in the screenshot | PX with `capture_id` | Expect AX to work |
-| Field in the tree with no action pattern | PX to focus, then `type_text` | `type_text` alone |
-| Electron on Windows | Foreground | Burn turns on background |
-| Chromium page | page level (CDP) | AX or PX |
-| `unverifiable` | Observe again | Treat as success |
-| `suspected_noop` | Re-locate | Retry in place |
+| Target in tree with an action | `element_token`, background | Pixels |
+| Text field in tree | `set_value` + token | `type_text` |
+| Target only in the screenshot | `x,y` + `capture_id` | Expect element routing to work |
+| Any action, always | `delivery_mode: background` first | Preemptively foreground |
+| `background_unavailable` | Re-issue that action as foreground | Guess from the app's type |
+| Chromium page | `browser_*` after `browser_prepare` | Element or pixel routing |
+| `effect: unverifiable` | Observe again | Assume success |
+| `effect: suspected_noop` | Re-locate | Retry in place |
 | `stale_element_token` | Re-observe | Reuse the token |
 | `background_uipi_blocked` | Stop, ask the user | Find a bypass |
-| Five attempts, no effect | Stop and report | Keep clicking |
+| Two failed attempts | Stop and report | Keep clicking |
 
 ## Maintenance
 
-`docs/action-support.md` in the cua repo is the authority for what is proven per
-platform and host. It changes as evidence lands. Re-check it before trusting a
-rung on a host not listed in the table above.
+`cua-driver list-tools` and `cua-driver describe <tool>` are the authority for
+this version. Re-read them after an upgrade; this file records 0.34.0.

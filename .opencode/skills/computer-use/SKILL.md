@@ -1,121 +1,156 @@
 ---
 name: Computer Use
-description: Drive the Windows desktop — take screenshots, click, type, scroll, drag, and inspect application controls. Use when a task needs a GUI app (native dialogs, installers, settings panes, Explorer, legacy desktop software) when shell and browser tools cannot reach it, when the user asks to "open", "click", "type into", or "check on screen", or when current desktop state must be seen.
+description: Drive the Windows desktop — inspect application controls, take screenshots, click, type, scroll and drag. Use when a task needs a GUI app (native dialogs, installers, settings panes, Explorer, legacy desktop software) that shell and browser tools cannot reach, when the user asks to "open", "click", "type into", or "check on screen", or when current desktop state must be seen.
 ---
 
 # Computer use
 
-You can see the screen, inspect application controls, and control the mouse and
-keyboard. Use it for GUI work that `shell` and the `browser` tools cannot
-reach.
+You can inspect application controls and control the mouse and keyboard. Use it
+for GUI work that `shell` and the `browser_*` tools cannot reach.
 
 ## Read this before your first action
 
 `references/routing.md` is the decision procedure. Read it, then act. It
-defines seven layers and, most importantly, **which path to take when the
-obvious one fails** — interface, then accessibility element, then pixel, then
-page, then foreground. Skipping it is how ten turns get burned on a background
-action an Electron app cannot accept.
+covers seven layers and, most importantly, **when to escalate** — background
+first, foreground only after a real refusal.
 
-`references/decision-table.json` tabulates the same routing: proven and refused
-actions per Windows host, every `effect` and refusal code, and the
-cost-control settings. Read it as reference, not as something that runs.
+`references/decision-table.json` tabulates the same routing for this version.
 
 ## Backends
 
 | Backend | Tools | Status |
 |---|---|---|
-| `cua-driver` (MCP) | `get_window_state`, `list_windows`, `click`, `type_text`, `press_key`, `hotkey`, `scroll`, `drag`, `move_cursor`, `wait` | Preferred. Self-verifying, does not move the real mouse, addresses controls by token. |
+| `cua-driver` 0.34.0 (MCP) | `get_window_state`, `get_accessibility_tree`, `get_desktop_state`, `get_screen_size`, `click`, `double_click`, `right_click`, `type_text`, `set_value`, `press_key`, `hotkey`, `scroll`, `drag`, `move_cursor`, `bring_to_front`, `verify_state`, `zoom` | Preferred. Self-verifying, does not move the real mouse, addresses controls by token. |
 | `cu.ps1` (this repo) | `computer_screenshot`, `computer_screen`, `computer_act` | Fallback. **Capture and diagnosis only.** |
 
 `cua-driver` binds every action to a specific window and a one-use
-`capture_id`, and reads state back to tell you whether the action actually
-applied. `cu.ps1` acts on whatever window happens to be focused — that
-limitation is exactly how this project once typed into the wrong application.
+`capture_id`, and reads state back to tell you whether the action applied.
+`cu.ps1` acts on whatever window is focused — that limitation is exactly how
+this project typed into the wrong application once.
 
-**Never use `computer_act` for `type_text`, `key`, or `click` when
-`cua-driver` is available.** Use `computer_screenshot` and `computer_screen` for
-cheap observation and diagnostics.
+**Never use `computer_act` for typing, keys, or clicks when `cua-driver` is
+available.** Use `computer_screenshot` and `computer_screen` for cheap
+observation.
 
 ## The loop
 
-**Look → locate → act → verify.** The last step is not optional. Acting without
-re-reading state is how you double-click the wrong button, type into a search
-field, or overwrite a file you meant to read.
+**Look → locate → act → verify.** The last step is not optional.
 
-1. **Look.** `list_windows` costs no image tokens — use it first to find the
-   target's `pid` and `window_id`. Then `get_window_state` for its control tree
-   and screenshot together.
-2. **Locate.** Prefer an `element_token` from the tree over reading coordinates
-   out of an image. Guess neither.
-3. **Act.** One action per call. Choose the rung from `routing.md` L3.
-4. **Verify.** Read `effect`. Only `confirmed` counts as success. `unverifiable`
-   means the app may have echoed a write it never applied — observe again.
-   `suspected_noop` means re-locate. `refused` means read the `code` and act on
-   it, then follow `escalation.recommended` rather than improvising.
+1. **Look.** `get_accessibility_tree` or `list_windows` for discovery — cheap,
+   no screenshot. Then `get_window_state`, which returns the control tree and a
+   screenshot **together**.
+2. **Locate.** Prefer an `element_token` from `structuredContent.elements`. Read
+   coordinates out of the screenshot only when no element matches, and pass the
+   observation's `capture_id` with them.
+3. **Act.** One action per call, `delivery_mode` left at `background`.
+4. **Verify.** Read `effect`, then check the task postcondition separately.
+   **Action facts are not task outcomes** — even `confirmed` only means the
+   action has readable state. `unverifiable` means delivery could not prove
+   effect: observe again, because the app may have echoed a write it never
+   applied. For an expressible postcondition use `verify_state`; its `unknown`
+   result is not success.
 
-After two failed attempts on the same target, stop and report. You are
-misreading the state, and clicking again makes it worse.
+Never replay a cancelled, partial or unknown action automatically — an
+interrupted transport may already have delivered it. Take fresh state first.
+For text specifically, a stale read-back means the provider may publish after
+the call returns, so an immediate retry can type the text twice.
+
+After two failed attempts on one target, stop and report. You are misreading
+the state.
+
+## Delivery: background is mandatory first
+
+> The driver is explicit: `background` is the mandatory first attempt. Do NOT
+> pass `foreground` preemptively because a target "looks like" GTK, Chromium or
+> Electron. The driver decides when background is impossible and returns
+> `background_unavailable`. Only then re-issue that same action as foreground.
+
+`background` never raises the window, moves the real pointer, or changes the
+frontmost app. Fronting up-front steals the user's focus for nothing.
 
 ## Targeting
 
-Every `cua-driver` action names its target explicitly — `{kind: "window", pid,
-window_id}` or `{kind: "desktop", display_id: "primary"}`. Nothing is locked
-to a session, and a malformed target fails before anything is sent.
+Every action names its target: `element_token`, or `x,y` plus `capture_id`,
+plus `pid` and `window_id`, or `scope: "desktop"` for screen coordinates.
+`click` needs `pid` even when `element_token` is present.
 
-`element_token` values are **one-use and expire**. A 5-minute idle timeout
-retires the session and invalidates every token and snapshot from it. On
-`stale_element_token`, re-observe. That is not a broken element route.
+**`element_token` values are one-shot.** Take one `get_window_state` per turn
+per `(pid, window_id)`; the next snapshot of that window supersedes them and
+lists the old ids in `invalidated_snapshot_ids`. On `stale_element_token`,
+re-observe — the element route is fine, the token is old.
 
-With the `cu.ps1` fallback, guards are mandatory on anything that types or
-submits: `focus: "<title>"` activates the window and verifies it, and
-`expect: "<title>"` aborts if it is not in front. Match a stable title fragment,
-not a whole title copied once — unsaved documents gain a `*` prefix.
+For multi-step work, pass one `session` label on every call. Unnamed calls use
+an implicit transport session; a 5-minute idle timeout retires it and
+invalidates its tokens.
+
+### Two coordinate spaces
+
+`element.frame` is **desktop** pixels. A pixel action carrying `capture_id` must
+use **window-local** pixels: `local = frame - window_bounds.origin`. Passing the
+desktop value gets `capture_coordinate_invalid`. `capture_id` is optional;
+omitting it routes through `synthetic_events`.
+
+There is **no `wait` tool**. Pause with `shell`'s `sleep`, or use `delay_ms` on
+`type_text` and `timeout_ms` on `get_window_state`.
 
 ## Coordinates
 
-All coordinates are **virtual desktop** space: the origin is the top-left of the
-leftmost/topmost monitor, so `x` and `y` can be negative. A maximised window's
-capture origin is typically `-13`, not `0`.
+Pixel coordinates are **window-local screenshot pixels** for a window target,
+or screen coordinates for `scope: "desktop"`. All fallback-backend coordinates
+are virtual-desktop space, where the origin is the top-left of the
+leftmost/topmost monitor so `x` and `y` can be negative; a maximised window's
+capture origin is typically `-13`.
 
-`cu.ps1` screenshots may be downscaled and report `scale` plus the region
-origin:
+The `cu.ps1` fallback may downscale and reports `scale` plus the region origin:
 
 ```
 screen_x = region.x + (image_x / scale)
 screen_y = region.y + (image_y / scale)
 ```
 
-A pixel-derived click must carry the same `capture_id` as the observation that
-produced the coordinates. Aim at the centre of a target, never its edge.
+Aim at the centre of a target, never its edge.
 
 ## Judgement
 
-- **Prefer the interface built for the job.** `shell`, `browser`, and `cu.ps1`
-  internals beat the mouse. Reach for a GUI action when there is no API, CLI,
-  or DOM to drive.
+- **Prefer the interface built for the job.** `shell`, `browser_*`, and
+  `set_value` beat the mouse. Reach for a GUI action only when there is no API,
+  CLI, or DOM to drive.
 - **Confirm before the irreversible.** Sending, submitting, paying, deleting,
-  overwriting, or anything that leaves the machine needs `question` first.
+  overwriting, or anything leaving the machine needs `question` first.
 - **Never type secrets.** If a password field appears, ask the user to type it.
 - **Refuse rather than bypass.** An elevated target returns
   `background_uipi_blocked`. Ask the user; do not hunt for a way around it.
-- **Keyboard over mouse** when both work — shortcuts survive window resizes and
-  DPI differences.
+- **Keyboard over mouse** when both work.
+
+## Deprecated — do not call
+
+`escalate_session`, `page`, and `get_session_state` are deprecated in 0.34.0.
+The `capture_mode` parameter on `get_window_state` is deprecated **and
+ignored**; the modality is chosen at action time by whether you pass an
+`element_token` or `x,y`.
+
+## The driver's own docs are available
+
+It serves 11 documents as MCP resources — `skill://cua-driver/WINDOWS.md`,
+`WORKFLOW.md`, `SKILL.md`, `VISUAL.md`, `BROWSER.md` and more. Read them before
+disagreeing with this skill, and prefer them when the two conflict. They are
+resources, not a competing installed skill, so they do not create the
+instruction conflict `cua-driver skills install` would.
+
+This skill stays the single source of *routing* decisions; the driver's
+documents are the source of *platform* detail.
 
 ## Cost
 
-Screenshots dominate context, and both backends capture the **active window**
-rather than the whole desktop by default. Ask for a full-desktop capture only
-when the target spans displays or the active window is not what you need.
-
-Prefer `list_windows` over a capture when you only need to identify a window.
-Bound `get_window_state` with `max_elements` and `max_depth`, reuse `pid` and
-`window_id`, and batch text into one `type_text`. On their Calculator example
-those changes cut uncached input from 71,088 to 12,251 tokens.
+Screenshots dominate context. Prefer `get_accessibility_tree` over a capture
+when you only need to identify a window. Bound `get_window_state` with
+`max_elements`, `max_depth`, and `query`; use `include_screenshot: false` to
+re-index cheaply. Both backends capture the **active window** by default — ask
+for a full-desktop capture only when the target spans displays.
 
 ## More
 
-- `references/routing.md` — the seven layers, ladders, and per-host capability tables
+- `references/routing.md` — seven layers, ladders, per-host capability tables, deprecations
 - `references/decision-table.json` — routing, effects, refusals and gates, tabulated
 - `references/recipes.md` — worked flows: opening apps, file dialogs, form filling
 - `references/troubleshooting.md` — blank captures, missed clicks, focus, wrong-window input
