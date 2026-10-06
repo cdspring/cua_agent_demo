@@ -1,0 +1,85 @@
+{
+  "$comment": [
+    "Record schema for the analysis layer. Nothing here reads a browser.",
+    "Collection is a separate problem with separate obstacles; this layer consumes",
+    "whatever you already have, in whatever shape, and refuses to invent numbers.",
+    "",
+    "THE ONE THING THAT MATTERS MOST, stated first because it invalidates the most",
+    "common analysis mistake:",
+    "",
+    "  ABSOLUTE engagement is confounded by audience size. 1,000 likes from 10,000",
+    "followers is a WORSE result than 300 likes from 1,000 followers, by a factor of",
+    "three. Ranking notes or creators by raw like count therefore measures mostly",
+    "how big they already are.",
+    "",
+    "  If follower counts are absent, every rate-like metric here is reported as",
+    "  unavailable rather than approximated. The analyzer will not silently fall back",
+    "  to absolute numbers under a rate-flavoured name.",
+    "",
+    "  Minimum viable data for a useful analysis is: note title, author, like count,",
+    "  and follower count. Everything else is enrichment."
+  ],
+
+  "note": {
+    "required": ["author", "likes"],
+    "optional": {
+      "note_id": "platform id, for dedupe across exports",
+      "title": "note title or first line of caption",
+      "url": "canonical note URL",
+      "published_at": "ISO date or date-time. Enables cadence and timing analysis",
+      "likes": "integer, required",
+      "collects": "integer. Enables collect-rate, which on this platform often separates savers from likers",
+      "comments": "integer",
+      "shares": "integer, if exposed",
+      "type": "video | image | unknown",
+      "topics": "array of strings. Enables topic/engagement association",
+      "duration_seconds": "integer, for video notes only",
+      "captured_at": "ISO date. When you observed it. Lets the analyzer say how stale the data is"
+    },
+    "unknowns": "Every optional field may be absent or null. Absence is recorded, never imputed."
+  },
+
+  "authorSnapshot": {
+    "$comment": "Follower counts over time. Without at least two of these for an author, no growth curve is possible.",
+    "required": ["author", "date", "followers"],
+    "optional": {
+      "likes_total": "aggregate likes across their notes at that date",
+      "note_count": "how many notes had been published by that date"
+    }
+  },
+
+  "aliases": {
+    "$comment": "Column-name mapping for CSV import, because a hand-kept sheet will not match the field names.",
+    "author": ["作者", "博主", "账号", "昵称", "author", "author_name", "user", "username"],
+    "title": ["标题", "笔记标题", "内容", "caption", "title", "note_title"],
+    "likes": ["点赞", "点赞数", "赞", "点赞量", "likes", "like_count", "liked"],
+    "collects": ["收藏", "收藏数", "藏", "collects", "collect_count", "saved"],
+    "comments": ["评论", "评论数", "comments", "comment_count", "reply"],
+    "shares": ["分享", "分享数", "shares", "share_count"],
+    "published_at": ["发布时间", "日期", "发布日期", "date", "publish_date", "published", "time"],
+    "followers": ["粉丝", "粉丝数", "关注数", "followers", "fans", "follower_count"],
+    "url": ["链接", "地址", "url", "link"],
+    "type": ["类型", "形式", "type", "note_type"],
+    "topics": ["话题", "标签", "tags", "topics", "hashtags"]
+  },
+
+  "parsing": {
+    "counts": "Accepts 1.2万 and 3.8k and 1,234 and '1.2w'. Strips thousands separators. Returns null for '', '-', '赞' and anything unparseable, and records the cell rather than coercing it to 0.",
+    "$comment": "Coercing an unreadable cell to 0 is the most damaging thing an importer can do: it pulls a mean down and nobody notices.",
+    "dates": "Accepts YYYY-MM-DD, YYYY/MM/DD, YYYY年M月D日, and an ISO date-time. Returns null rather than guessing when ambiguous.",
+    "magnitude": {
+      "万": 10000,
+      "w": 10000,
+      "W": 10000,
+      "k": 1000,
+      "K": 1000,
+      "亿": 100000000,
+      "$comment": "千 was missing from this table until the CSV importer was run against a hand-entered sheet containing 9.1千. The regex matched 9.1 with no unit and returned 9, so a follower count of 9,100 became 9 and the engagement rate came out at 48507%. Any magnitude unit a person might type belongs here."
+    },
+    "sanity": {
+      "$comment": "Values that survive parsing but are implausible indicate a parse or unit error upstream. The analyzer reports these rather than computing on them.",
+      "followers_below_likes": "A note with more likes than the author has followers usually means the follower column was mis-parsed. Flagged, not corrected.",
+      "rate_over_1": "An interaction rate above 100% is possible on this platform when a note travels beyond the following, but above ~300% usually means a bad denominator."
+    }
+  }
+}
