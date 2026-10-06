@@ -204,6 +204,37 @@ Agent layer, on top:
 | Integrity | Target is elevated | Refuse; do not bypass |
 | Staleness | `stale_element_token`, or 5 min idle | Re-observe |
 
+### bounded mode, measured on Windows
+
+`bounded` runs seven narrowing layers. Two of them are separate and it matters
+which one fired:
+
+| Refusal code | Layer | Meaning |
+|---|---|---|
+| `permission_denied` | `allow.tools` | The tool's **name** is not listed |
+| `bounded_resource_outside_manifest` | `resources` | The tool is allowed but the **resource** it touches is not in scope |
+
+**`desktop.display` must be `true` on Windows.** With `false`, the runtime
+refuses `list_windows`, `list_apps`, `get_accessibility_tree`, `click` and
+`type_text` with *"desktop display observation is outside the capability
+manifest"*. The agent then cannot learn a pid or window_id, so it cannot address
+anything: the manifest deadlocks. This flag means "may the agent see the
+desktop at all", not merely "may it take a full screenshot".
+
+The boundary that actually constrains the agent is `resources.apps`, matched
+against **the executable that owns the window**, not the one that was launched.
+Verified: a manifest-listed `charmap.exe` is addressable (15 elements), while
+`SystemSettings.exe` and `explorer.exe` are refused with
+`bounded_resource_outside_manifest`.
+
+Packaged apps are the trap here. Calculator's window is owned by
+`ApplicationFrameHost.exe`, not `calc.exe`, so listing `calc.exe` will not
+authorise it. Check `list_windows`' `app_name`, or `Get-Process`'s `Path`, before
+writing an app entry.
+
+`bounded` also fails closed rather than degrading: with no manifest, or with a
+manifest but no approval, startup is refused outright.
+
 ## Loop
 
 ```text

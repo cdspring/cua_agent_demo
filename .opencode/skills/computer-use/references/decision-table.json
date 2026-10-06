@@ -145,6 +145,21 @@
     "staleness": { "triggers": ["stale_element_token", "session idle > 5 minutes"], "action": "re-observe" },
     "maxAttemptsSameTarget": 2
   },
+  "boundedMode": {
+    "$comment": "Measured on Windows. Two distinct refusal codes identify which layer fired.",
+    "refusalCodes": {
+      "permission_denied": "allow.tools: the tool NAME is not listed",
+      "bounded_resource_outside_manifest": "resources: the tool is allowed but the RESOURCE is out of scope"
+    },
+    "refusalCodeLocation": "structuredContent.code or structuredContent.refusal.code, NOT content[].text",
+    "desktopDisplayMustBeTrue": {
+      "why": "with false, list_windows, list_apps, get_accessibility_tree, click and type_text are all refused as 'desktop display observation is outside the capability manifest'; the agent cannot learn a pid, so the manifest deadlocks",
+      "meaning": "may the agent see the desktop at all, not merely may it screenshot the whole display"
+    },
+    "realBoundary": "resources.apps, matched against the executable that OWNS the window, not the one launched",
+    "packagedAppTrap": "Calculator's window is owned by ApplicationFrameHost.exe, not calc.exe; check list_windows app_name before writing an app entry",
+    "failsClosed": "no manifest, or a manifest without approval, refuses startup rather than degrading to standard"
+  },
   "deprecated": {
     "$comment": "Present in 0.34.0 but deprecated. Do not call.",
     "escalate_session": "capture-scope legacy; scope is now explicit per call",

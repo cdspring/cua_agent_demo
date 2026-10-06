@@ -1,30 +1,38 @@
 # Capability manifest for `cua-driver` in `bounded` mode.
 #
-# Why bounded: the default `standard` mode allows input to ANY application
-# with no prompt. That is fine for a one-off tutorial and wrong for an agent
-# that runs unattended on a machine with a logged-in browser.
+# Why bounded: the default `standard` mode allows input to ANY application with
+# no prompt. That is acceptable while wiring things up and wrong for an agent
+# that runs unattended on a machine holding a logged-in browser.
 #
-# This manifest is deny by default. A tool must appear in allow.tools AND every
-# resource it touches must match, otherwise the call is denied. A manifest can
-# only narrow a mode, never widen one.
+# A manifest is deny by default: a tool must be in `allow.tools` AND every
+# resource it touches must match. It narrows a mode and never widens one.
 #
-# Windows notes:
-#   - Apps are identified by absolute `executable`, not bundle_id (that is macOS).
-#   - Keep `desktop.display: false` unless you truly need full-display capture
-#     and screen-coordinate input. It is the broadest grant in this file.
-#   - Do NOT add `resources.browser.origins` here. The runtime refuses to start
-#     when a manifest scopes browser origins while generic tools such as click
-#     and get_window_state remain available, because those tools see whatever
-#     tab is open. Run browser work and desktop work as two runtimes.
+# Windows notes, each learned from a failed or wrong run:
+#   - Apps are identified by an absolute `executable`. `bundle_id` is macOS.
+#   - `expires_after` and `idle_timeout` are both REQUIRED in bounded. Supplying
+#     only the manifest fails startup rather than falling back to standard.
+#   - `desktop.display: true` is REQUIRED for a usable manifest on Windows.
+#     Measured, not assumed: with `display: false` the runtime refuses
+#     list_windows, list_apps, get_accessibility_tree, click and type_text with
+#     "desktop display observation is outside the capability manifest". The agent
+#     cannot learn a pid or a window_id, so it cannot address anything and the
+#     manifest deadlocks. `display` is therefore "may the agent see the desktop
+#     at all", not merely "may it capture a full screenshot".
+#     The boundary that actually constrains the agent is `resources.apps` below,
+#     not this flag. Verified: with display true, unlisted apps are still refused
+#     with bounded_resource_outside_manifest.
+#   - Do NOT add `resources.browser.origins` to this file. The runtime refuses to
+#     start when a manifest scopes browser origins while generic tools such as
+#     click and get_window_state remain available, because those tools see
+#     whatever tab is open. Run browser work and desktop work as two runtimes.
 #
-# Verify before unattended use:
+# Verify before unattended use. scripts/verify-bounded.mjs does all three:
 #   1. an in-scope call succeeds silently
-#   2. the same tool against another app/path returns bounded_resource_outside_manifest
-#   3. an unlisted tool returns permission_denied
+#   2. the same tool against an unlisted app returns
+#      bounded_resource_outside_manifest
+#   3. a tool that is not listed at all returns permission_denied
 
 version: 3
-
-# bounded requires both of these.
 expires_after: 8h
 idle_timeout: 30m
 
@@ -33,29 +41,50 @@ allow:
     # session lifecycle
     - start_session
     - end_session
-    # observation (read-only)
+    # discovery
     - list_windows
     - list_apps
+    - get_screen_size
+    # observation. get_window_state is the primary entry point and MUST be
+    # listed: omitting it denies every per-window observation with
+    # "tool 'get_window_state' is outside the capability manifest", which looks
+    # exactly like an app-scope refusal and is how an earlier revision of this
+    # file produced three confident but wrong conclusions.
     - get_window_state
     - get_accessibility_tree
-    - get_desktop_state
-    - wait
-    # input — keep this list as small as the task allows
+    - zoom
+    # input
     - click
+    - double_click
+    - right_click
     - type_text
+    - set_value
     - press_key
     - hotkey
     - scroll
     - drag
     - move_cursor
-    # launch and teardown
+    # window geometry
+    - set_window_frame
+    - bring_to_front
+    # postconditions
+    - verify_state
+    # lifecycle
     - launch_app
     - kill_app
 
+  # Deliberately absent, and why:
+  #   get_desktop_state  whole-display capture; per-window state is enough
+  #   browser_*          needs its own runtime, see the header
+  #   clipboard_*        reads and writes the user's clipboard
+  #   start_recording    writes trajectory captures to disk
+  #   parse_visual_regions, install_extension, replay_trajectory
+  #   history_*, check_for_update, update
+  # Adding any of these is a scope decision, not a convenience.
+
 resources:
   apps:
-    # Replace with the real absolute paths on this machine. These are examples
-    # of the shape; an unlisted executable is denied.
+    # Absolute, verified to exist on this machine.
     - executable: C:\Windows\System32\notepad.exe
       launch: true
       windows: all
@@ -67,18 +96,21 @@ resources:
       windows: all
       terminate: driver_launched
 
+    - executable: C:\Windows\System32\charmap.exe
+      launch: true
+      windows: all
+      terminate: driver_launched
+
   files:
     read:
-      # Scoped input directory. Canonical-path component comparison.
       - dir: C:\Users\spring\Documents
         recursive: false
     write:
-      # Never grant write to a broad root. Keep outputs in one place.
+      # Never grant a broad write root. Keep outputs in one reviewable place.
       - dir: C:\Users\spring\AppData\Local\Temp\opencode\cu-output
         recursive: true
 
   desktop:
-    # Narrow by default: full-display capture plus screen-coordinate input is
-    # the grant that makes pixel addressing possible at all. Set true only if
-    # the task genuinely needs the whole screen.
-    display: false
+    # See the header: false deadlocks discovery on Windows. The real boundary
+    # is resources.apps.
+    display: true

@@ -239,15 +239,53 @@ foreground escalation (needs an Electron host), `bounded` mode, `invoke_menu`.
 multi-field positional JSON argv, so `cua-driver call` must be driven from Node
 or PowerShell 7+. Every script under `scripts/` is Node for that reason.
 
+### bounded mode
+
+Verified 21/21 by `scripts/verify-bounded.mjs`, which runs bounded over MCP with
+the manifest and approval environment variables — the same path OpenCode uses —
+so the standard-mode daemon is untouched.
+
+| Check | Result |
+|---|---|
+| `bounded` with no manifest | refused at startup, does not degrade to standard |
+| `bounded` with manifest but no approval | refused at startup |
+| `list_windows`, `get_screen_size` | allowed |
+| Listed app (`charmap.exe`) | addressable, 15 elements |
+| Unlisted app (`SystemSettings.exe`, `explorer.exe`) | `bounded_resource_outside_manifest` |
+| Tool not in `allow.tools` (4 tested) | `permission_denied` |
+
+Three findings that are not in the driver's docs:
+
+- **`desktop.display` must be `true` on Windows.** With `false`, `list_windows`,
+  `list_apps`, `get_accessibility_tree`, `click` and `type_text` are all refused
+  as *"desktop display observation is outside the capability manifest"*. The
+  agent cannot learn a pid, so the manifest deadlocks. The flag means "may the
+  agent see the desktop at all", not "may it screenshot the display".
+- **The two refusal codes identify different layers.** `permission_denied` means
+  the tool *name* is absent from `allow.tools`; `bounded_resource_outside_manifest`
+  means the tool is allowed but the *resource* is out of scope. They live in
+  `structuredContent`, not in `content[].text`.
+- **App scope matches the executable that owns the window, not the one
+  launched.** Calculator's window is owned by `ApplicationFrameHost.exe`, so
+  listing `calc.exe` will not authorise it. Check `list_windows`' `app_name`
+  before writing an app entry.
+
+`config/cua-bounded.yaml` carries all three as comments, because they are easy
+to get wrong and each one produces a refusal that looks like a different
+problem.
+
 ### Scripts
 
 | Script | Purpose |
 |---|---|
 | `verify-mcp.mjs` | MCP handshake, tool inventory, checks routing.md names only real tools |
+| `verify-bounded.mjs` | 21 checks over bounded mode, including fail-closed startup |
 | `verify-phase2.mjs` | Element click with cursor/focus side-effect assertions |
 | `verify-input.mjs` | `type_text` / `set_value` / `press_key` against a real edit field |
 | `verify-coords.mjs` | Desktop vs window-local coordinate conversion |
 | `verify-actions.mjs` | `capture_id`, foreground delivery, restoration |
+| `probe-bounded-matrix.mjs` | Which tools survive a given manifest shape |
+| `probe-app-owners.mjs` | Prints the real owning executable per window |
 | `check-docs.mjs` | Validates the decision table; flags stale tool names in the docs |
 | `read-cua-docs.mjs` | Downloads the driver's own MCP resources for cross-checking |
 
