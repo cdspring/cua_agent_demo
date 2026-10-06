@@ -1,36 +1,91 @@
-# Agent-layer policy for `cua-driver`. Complements the capability manifest.
-#
-# The manifest decides WHICH apps, files, and tools are reachable.
-# This policy decides WHICH ARGUMENTS are acceptable.
-# Use both: the manifest alone cannot stop `type_text` from writing 10,000
-# characters, and the policy alone cannot stop input to an unlisted app.
-#
-# Loaded via CUA_DRIVER_POLICY_FILE. Deny by default. Evaluated as:
-#   deny.tools -> allow.tools -> matching allow.rules -> deny
-# Constraints support min, max, max_length, pattern (RE2), and allowed.
+# Agent-layer policy for cua-driver 0.34.0. Complements the capability manifest.
 #
 #   $env:CUA_DRIVER_POLICY_FILE = "$PWD\config\cua-policy.yaml"
-#   cua-driver serve
+#   cua-driver mcp
 #
-# For rules OpenCode should enforce rather than the driver, prefer
-# opencode.jsonc `permissions`, which prompts the user. This file cannot prompt.
+# ===========================================================================
+# NOT CURRENTLY WIRED INTO ANY RUNTIME.
+#
+# The global config in ~/.config/opencode/opencode.jsonc runs `standard` mode with
+# no CUA_DRIVER_POLICY_FILE, by explicit decision. Set the env var to activate.
+#
+# Read this before you do. The policy is DENY BY DEFAULT for tools, so activating
+# it denies every tool absent from allow.tools and allow.rules. It is tighter
+# than `standard`, not lighter. Verified with:
+#     node scripts/probe-policy-matrix.mjs        # the table below
+#     node scripts/probe-policy-enforcement.mjs   # tool-level gating
+# ===========================================================================
+#
+# ===========================================================================
+# THE RULE THAT BIT US
+#
+#   allow.tools   grants a tool UNCONDITIONALLY and OVERRIDES allow.rules.
+#   allow.rules   both grants a tool AND constrains it.
+#
+# So a tool listed in BOTH is effectively unconstrained. Measured:
+#
+#   type_text in allow.tools only           600 chars -> ok, wrote all 600
+#   type_text in allow.rules only           600 chars -> permission_denied
+#                                            "argument constraints were not
+#                                             satisfied"
+#   type_text in BOTH                       600 chars -> ok, wrote all 600
+#
+# Listing a tool in both, which is the intuitive arrangement, silently disables
+# every constraint you wrote for it. There is no warning. Below, every
+# constrained tool appears ONLY under rules, never under tools.
+#
+# ---------------------------------------------------------------------------
+# SCHEMA, MEASURED BY scripts/bisect-policy-schema.mjs
+#
+# The driver REFUSES TO START on a malformed policy rather than ignoring it, so a
+# wrong key name takes the whole runtime down instead of degrading one rule.
+#
+#     constraints:
+#       <argumentName>:          # not validated
+#         <operator>: <value>   # validated strictly
+#
+#   max_length   accepted        maxLength   REJECTED, not in the vocabulary
+#   min / max    accepted        required    DOES NOT EXIST
+#   pattern      accepted, RE2   <unknown>   REJECTED
+#   allowed      accepted, flow or block form
+#
+# Tool names and argument names are not validated either, so a rule naming a tool
+# or argument that does not exist parses cleanly and then binds to nothing. A
+# misspelled argument fails SILENTLY. `duration_ms` below is spelled exactly as
+# the drag tool spells it for that reason.
+#
+# Refusal text, so callers can recognise it:
+#   permission_denied: user policy: tool '<name>' argument constraints were not
+#   satisfied: ...
+# ===========================================================================
 
 allow:
-  # Any arguments
+  # Observation only. These take no arguments worth constraining, so granting them
+  # unconditionally is correct and is exactly what allow.tools is for.
   tools:
-    # observation is safe with any arguments
     - list_windows
     - list_apps
     - get_window_state
     - get_accessibility_tree
     - get_desktop_state
-    - wait
+    - get_screen_size
     - end_session
+    # `wait` was listed in an earlier revision. There is no `wait` tool in
+    # 0.34.0. Tool names are not validated, so it parsed and did nothing.
+    # Removed rather than left as decoration.
 
+  # Every tool below is constrained, so none of them may appear above.
   rules:
-    # Bound text entry. A length cap plus an ASCII pattern stops both runaway
-    # loops and accidental multi-line pastes. Widen the pattern only where the
-    # target genuinely needs non-ASCII.
+    # Bound text entry. A length cap stops a runaway loop; a pattern stops
+    # accidental multi-line pastes.
+    #
+    # THE PATTERN IS ASCII-ONLY, and with it in place typing CJK into Notepad is
+    # REFUSED by policy. The driver handles CJK correctly — Phase 4 Task 2 typed
+    # 中文输入 OK into Notepad with effect: confirmed. Refusing it is a real cost,
+    # kept here because the rule's purpose is to stop runaway input, not to act as
+    # a charset gate. Widen to:
+    #     pattern: "^[\x20-\x7E\u4E00-\u9FFF\n\t]*$"
+    # if CJK entry matters more than the extra permissiveness.
     - tool: type_text
       constraints:
         text:
@@ -44,30 +99,42 @@ allow:
           min: -20
           max: 20
 
-    # Clicks must name a target explicitly. Without a target the driver would
-    # act on whatever is focused, which is the exact failure this project hit.
-    - tool: click
-      constraints:
-        target:
-          required: true
-
-    # Only allow launching known-safe apps; launching is how an agent ends up
+    # Only allow launching known-safe apps. Launching is how an agent ends up
     # running something it was never asked to run.
+    #
+    # Constrains `path`, which is the argument launch_app actually takes. An
+    # earlier revision constrained `executable`; argument names are not
+    # validated, so that parsed and bound to nothing.
     - tool: launch_app
       constraints:
-        executable:
+        path:
           allowed:
             - "C:\\Windows\\System32\\notepad.exe"
             - "C:\\Windows\\System32\\calc.exe"
             - "C:\\Windows\\System32\\mspaint.exe"
 
-    # Drag is the action most likely to cause data loss (moving files, closing
-    # a dialog by accident). Bound its duration so it cannot stall.
+    # Drag is the action most likely to cause data loss: moving files, closing a
+    # dialog by accident. Bound its duration so it cannot stall.
     - tool: drag
       constraints:
-        durationMs:
+        duration_ms:
           min: 100
           max: 5000
+
+    # The earlier `click must name a target` rule asked for `required: true`.
+    # There is no `required` operator, so that file failed to parse and the driver
+    # refused to start. The rule is not expressible in this schema.
+    #
+    # What replaces it is not nothing. Three other mechanisms cover the hazard:
+    #   - under `bounded`, an out-of-scope target is refused with
+    #     bounded_resource_outside_manifest;
+    #   - the agent cursor overlay shows where a pixel click lands;
+    #   - SKILL.md requires naming a target before clicking.
+    # The original incident, cu.ps1 typing into whatever held focus, was a
+    # routing mistake, and routing is what the skill is for.
+    #
+    # Left deliberately ungranted rather than granted unconditionally: an
+    # unconstrained click is worse than no click under a policy this strict.
 
 deny:
   tools:
@@ -75,3 +142,8 @@ deny:
     - shell_execute
     # Uploading leaves the machine. Requires a deliberate, separate decision.
     - upload
+    # Killing a host application is how this project once destroyed the user's
+    # unsaved Notepad tabs to obtain a test fixture. The driver's manifest
+    # expresses the same idea with `terminate: driver_launched`; here it is denied
+    # outright, which is the right default for a policy file.
+    - kill_app

@@ -113,9 +113,11 @@ resources:
       windows: all
       terminate: driver_launched
 
-    # The Calculator launcher. Needed so the agent can START it; the window it
-    # creates is owned by ApplicationFrameHost.exe below, so both entries are
-    # required. calc.exe alone would authorise the launcher and nothing else.
+    # The Calculator launcher. Needed so the agent can START it. The window it
+    # creates is owned by CalculatorApp.exe above, not by calc.exe, so both
+    # entries are required: calc.exe alone authorises the launcher and nothing
+    # else. Worth noting that Calculator is currently NOT DRIVABLE at all — see
+    # the ax_tree_empty finding in README's Phase 4 section.
     - executable: C:\Windows\System32\calc.exe
       launch: true
       windows: all
@@ -138,15 +140,6 @@ resources:
     # Windows' own packaged apps. Re-derive with scripts/probe-app-owners.mjs
     # after any Windows or app update that touches these.
     - executable: C:\Program Files\WindowsApps\Microsoft.WindowsCalculator_11.2607.0.0_x64__8wekyb3d8bbwe\CalculatorApp.exe
-      launch: false
-      windows: all
-      terminate: driver_launched
-
-    # The older host, kept because some Store apps still land in it. WARNING:
-    # this is much broader than "allow Calculator" — it authorises EVERY
-    # packaged app window on the desktop, Settings included. Drop it once you
-    # have confirmed you do not need it.
-    - executable: C:\WINDOWS\system32\ApplicationFrameHost.exe
       launch: false
       windows: all
       terminate: driver_launched

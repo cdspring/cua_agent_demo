@@ -114,16 +114,34 @@ bring_to_front
   -> raised in z-order, but Windows kept foreground on hwnd 0x0
 ```
 
-Root cause, checked three ways: the window station is `WinSta0`, the desktop is
-`Default`, the session is 4 (the console session) — all correct — and
-`GetForegroundWindow()` still returns `0x0`. The desktop simply has no foreground
-window, so `SetForegroundWindow` cannot succeed. `bring_to_front` uses
-`AttachThreadInput` to defeat the foreground lock and still cannot.
+Phase 5 measured the root cause properly, because the `0x0` readings above are
+one transient state rather than the cause:
 
-**Consequence: for an application with neither a tree nor a DOM, there is no
-working rung in this deployment. Check the tree first and say so, rather than
-clicking into a void.** A capability the driver exposes in principle can be
-unreachable in a given environment, and only a measurement distinguishes the two.
+| Measurement | Result |
+|---|---|
+| window station / thread desktop / INPUT desktop | `WinSta0` / `Default` / `Default` — all correct, all identical |
+| session | 4, the console session |
+| attached display | `DISPLAY1` 1440x810, present |
+| foreground over 6 samples | `0x4066E`, `Chrome_WidgetWin_1`, the user's Edge — **stable** |
+| `SetForegroundWindow` on 21 other windows | **refused for all 21** |
+| `bring_to_front` (`AttachThreadInput`) | `Windows kept foreground on hwnd 0x20818` |
+
+The foreground window exists and moves normally. The constraint is the **Windows
+foreground lock**: a process that does not own the current foreground window, and
+was not started by it, cannot take focus. `AttachThreadInput` does not defeat it
+here.
+
+The documented remedy is `bin/cua-driver-uia.exe` — `uiAccess="true"`, present,
+validly signed `CN="Cua AI, Inc."`. It **exits with code 1 for every invocation**,
+and the running daemon is the non-UIA `cua-driver.exe`, started by the
+`cua-driver-serve` scheduled task at `RunLevel=Highest` (admin, not UIAccess).
+
+**So: for an application with neither a tree nor a DOM, there is no working rung
+on this host. Check the tree first and say so, rather than clicking into a void.**
+A capability the driver exposes in principle can be unavailable in a given
+environment, and only a measurement distinguishes the two.
+
+Run `scripts/probe-feasibility.mjs` to ask the question for every window at once.
 
 ### Observation calls
 
@@ -338,6 +356,39 @@ paths are the maintainable case.
 
 `bounded` also fails closed rather than degrading: with no manifest, or with a
 manifest but no approval, startup is refused outright.
+
+### Argument policy (`CUA_DRIVER_POLICY_FILE`) — not currently wired
+
+A second, independent axis. The manifest says *which apps and tools*; the policy
+says *which arguments*. Not wired into any runtime here, by decision.
+
+Both are real and enforced — the driver **refuses to start** on a malformed
+policy rather than ignoring it, so a wrong key name takes the whole runtime down.
+
+The rule that is easy to get backwards:
+
+> `allow.tools` grants a tool **unconditionally and overrides `allow.rules`**.
+> `allow.rules` both grants a tool AND constrains it.
+
+Measured with `max_length: 500`:
+
+| Configuration | 600 chars into Notepad |
+|---|---|
+| in `allow.tools` only | **written**, constraint ignored |
+| in `allow.rules` only | **refused**: `argument constraints were not satisfied` |
+| in **both** | **written** — the rule is silently ignored |
+
+Constrained tools must appear **only** under `rules`.
+
+Schema, measured by `scripts/bisect-policy-schema.mjs` over 25 candidates:
+`max_length`, `min`, `max`, `pattern`, `allowed` are operators. `maxLength` is
+**rejected** despite being the more idiomatic spelling. `required` **does not
+exist**, which is why "click must name a target" cannot be expressed. Unknown
+argument and tool names are **accepted** and then bind to nothing — a typo in an
+argument name fails silently.
+
+Note that activating the policy is a *tightening*: it is deny-by-default for
+tools, so it denies everything absent from `allow.tools` and `allow.rules`.
 
 ### Minimized windows
 

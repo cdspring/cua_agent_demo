@@ -64,6 +64,12 @@ const UNRELATED = new Set([
   // tools, the hand-written fallback's old tool names, and the manifest key.
   "escalate_session", "page", "get_session_state",
   "computer_screenshot", "computer_screen", "computer_act", "allow",
+  // Policy vocabulary and structuredContent fields from Phase 5.
+  "allow", "rules", "max_length", "min", "pattern", "allowed", "required",
+  "constraints", "duration_ms", "durationMs", "executable", "element_count",
+  "capture_coordinate_invalid", "foreground_unavailable", "tool_invocation_failed",
+  "ax_tree_empty", "browser_requires_setup", "policy_constraints",
+  "tool_invocation_failed", "foreign_process_termination_denied",
 ])
 const suspects = [...mentioned].filter((m) => !REAL_TOOLS.has(m) && !UNRELATED.has(m) && /^[a-z][a-z0-9_]*$/.test(m))
 console.log("\nbackticked identifiers in docs that are neither real tools nor known noise:")

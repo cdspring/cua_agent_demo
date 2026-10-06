@@ -215,9 +215,119 @@ Run on this machine against cua-driver 0.34.0.
 | `press_key` | dispatches via `synthetic_events`, `effect: unverifiable` |
 | `launch_app` hidden | launched without stealing focus |
 
-Not yet proven: the `set_value` success path, `invoke_menu`. The
-`background_unavailable` → foreground escalation is now measured and is
-**unreachable on this machine** — see Phase 4 below.
+### Phase 5 — closing the gaps
+
+Four findings from this round, three of which corrected something I had asserted
+earlier without measuring it.
+
+#### The policy file was never decorative. It was misconfigured.
+
+I previously told the user `config/cua-policy.yaml` was read by nothing. **That
+was wrong.** `CUA_DRIVER_POLICY_FILE` and `CUA_DRIVER_MANAGED_POLICY_FILE` are
+both present in the driver binary, and setting the variable made the driver
+**refuse to start**: `Policy loading error: user policy: failed to parse YAML
+policy`. A working control, disabled by a schema bug on our side.
+
+`scripts/bisect-policy-schema.mjs` starts the driver against 25 candidate files
+and reports which initialise. The schema, measured:
+
+| Construct | Result |
+|---|---|
+| `max_length`, `min`, `max`, `pattern`, `allowed` | **accepted** |
+| `maxLength` | **rejected** — not in the operator vocabulary, despite being the more idiomatic spelling |
+| `required` | **rejected — does not exist** |
+| any unknown operator | rejected |
+| unknown argument name, unknown tool name | **accepted**, then binds to nothing |
+
+So the constraint model is `constraints: {<argumentName>: {<operator>: <value>}}`
+where the outer key is unvalidated and the inner key is strictly validated. Our
+file failed on `required: true`, the rule that asked "click must name a target".
+That rule is simply not expressible.
+
+**And the rule that actually matters is the opposite of the intuitive
+arrangement.** `allow.tools` grants a tool **unconditionally and overrides
+`allow.rules`**:
+
+| Configuration | 600 chars into Notepad |
+|---|---|
+| `type_text` in `allow.tools` only | **written**, `max_length: 500` ignored |
+| `type_text` in `allow.rules` only | **refused** — `argument constraints were not satisfied` |
+| `type_text` in **both** | **written** — the rule is silently ignored |
+
+Listing a tool in both, which is what the original file did, disables every
+constraint written for it, with no warning. `config/cua-policy.yaml` is rewritten
+so every constrained tool appears only under `rules`.
+
+The policy is **not wired into any runtime**. The global config runs `standard`
+with no policy variable, by explicit decision. Note that activating it is a
+*tightening*: it is deny-by-default for tools.
+
+#### Foreground activation: the Windows foreground lock, and it is not recoverable here
+
+Phase 4 reported `GetForegroundWindow() == 0x0` and concluded the desktop had no
+foreground window. That was one transient state, not the cause.
+
+| Measurement | Result |
+|---|---|
+| window station / thread desktop / INPUT desktop | `WinSta0` / `Default` / `Default` — **all correct and identical** |
+| session | 4, the console session |
+| attached display | `DISPLAY1` 1440x810, present |
+| foreground over 6 samples | `0x4066E`, `Chrome_WidgetWin_1`, the user's Edge window — **stable** |
+| `SetForegroundWindow` on 21 other windows | **refused for all 21** (`ret=False`) |
+| `bring_to_front` (`AttachThreadInput`) | `Windows kept foreground on hwnd 0x20818` |
+
+The foreground window exists and moves normally. The constraint is the **Windows
+foreground lock**: a process that does not own the current foreground window, and
+was not started by it, cannot take focus — and `AttachThreadInput` does not defeat
+it here either.
+
+The documented remedy is `bin/cua-driver-uia.exe`, a `uiAccess="true"` binary
+that is present and validly signed (`CN="Cua AI, Inc."`, status Valid). But it
+**exits with code 1 for every invocation**, and the running daemon is the
+non-UIA `cua-driver.exe` (pid 19188, started by the `cua-driver-serve`
+scheduled task at `RunLevel=Highest`, which is admin, not UIAccess).
+
+So the pixel rung stays unusable for tree-less apps on this host. **That is a
+host limitation to record, not a defect to route around.**
+
+#### The driver already refuses to kill foreign processes
+
+`kill_app` on a window opened by an earlier, now-exited MCP child returned
+`foreign_process_termination_denied` — enforced even in `standard` mode, and the
+same guard as the manifest's `terminate: driver_launched`.
+
+Worth recording plainly: **the original Notepad incident could not have happened
+through this path.** It went through PowerShell's `Stop-Process -Force`, which
+bypassed the driver entirely. The driver-side guard was there; the mistake was
+reaching around it.
+
+#### New in the harness
+
+- `scripts/lib/cua-client.mjs` — the spawn/JSON-RPC/call boilerplate that was
+  duplicated across eight scripts, plus `fresh()`/`freshUntil()` for one-shot
+  tokens, `tally()` with `ok`/`refused` helpers that match on codes instead of
+  prose, `feasibility()`, and `safeKill()`.
+- `scripts/probe-feasibility.mjs` — one call answers "can this app be driven"
+  for every window on the desktop. It took three rounds of hand-built probes to
+  establish that answer; this is now a single call.
+- `scripts/cleanup-scratch.mjs` — demonstrates `safeKill()` refusing an
+  untracked window.
+- SKILL.md gained a **Step 0 feasibility gate** before look/locate/act/verify,
+  and a "never terminate an app you did not launch" section.
+
+#### Left undone, honestly
+
+One window could not be closed: `mx-1791275619218-D.txt - Notepad`, pid 13300,
+our own scratch fixture from `probe-policy-matrix.mjs`. `kill_app` refused
+(`foreign_process_termination_denied`, correct); `alt+F4` returned ok and the
+window stayed; the window's own `关闭` button took the `PostMessage` path
+(`Performed PostMessage click`), which Notepad's XAML chrome drops; and the
+foreground escalation is blocked by the lock above. Per the skill's own rule —
+after two failed attempts on one target, stop and report — it is left for you to
+close by hand. **It is a scratch file in
+`%LOCALAPPDATA%\Temp\opencode\cu-output`, not anything of yours.**
+
+Also still unproven: `set_value`'s success path, and `invoke_menu`.
 
 ### Phase 4 — real tasks
 

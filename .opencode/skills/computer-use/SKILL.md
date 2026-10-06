@@ -34,6 +34,44 @@ observation.
 
 ## The loop
 
+### Step 0: check feasibility, before anything else
+
+**Not every app can be driven. Ask before you act, not after.**
+
+Call `get_window_state` on the target and read `element_count` and
+`degraded_reason`. Measured on this machine:
+
+| App | Elements | Drivable |
+|---|---|---|
+| Notepad, Obsidian, WeChat, Edge, Chrome | 20-568 | **yes**, via the accessibility tree |
+| `CalculatorApp.exe`, `SystemSettings.exe` | **0** | **no** |
+
+A zero-element app is not drivable. The driver says so itself:
+`ax_tree_empty: the UIA walk returned no actionable elements ... switch to the
+visual path`. And on this machine the visual path is a dead end:
+
+- a background pixel click returns `tool_invocation_failed` carrying the text
+  `operation completed successfully (0x00000000)` - Win32 `S_OK` - and **nothing
+  changes on screen**. That `S_OK` is the `PostMessage`'s own return, not the
+  click's effect.
+- foreground delivery returns `foreground_unavailable: Windows did not activate
+  exact target HWND (actual foreground HWND ...)`, because the Windows foreground
+  lock refuses activation from a process that does not own the current foreground
+  window. The desktop, window station and session are all correct; the lock is
+  the constraint. See README Phase 4 for the full root cause.
+
+**If the tree is empty, say the app cannot be driven and stop.** Do not click into
+a void, and never report a Win32 `S_OK` as a successful click.
+
+For a browser an empty tree is not the end; check the DOM route
+(`browser_prepare`, then `get_browser_state`). CDP needs no foreground window.
+
+`scripts/probe-feasibility.mjs` runs this check for every window on the desktop.
+
+### The four steps
+
+**Look, locate, act, verify.** The last step is not optional.
+
 **Look → locate → act → verify.** The last step is not optional.
 
 1. **Look.** `get_accessibility_tree` or `list_windows` for discovery — cheap,
@@ -57,6 +95,19 @@ the call returns, so an immediate retry can type the text twice.
 
 After two failed attempts on one target, stop and report. You are misreading
 the state.
+
+## Never terminate an app you did not launch
+
+This project destroyed the user's unsaved Notepad tabs by force-killing it to
+obtain a test fixture (commit `0ce0665`).
+
+**Never `kill_app` a host application to get a fixture, to "reset" one, or to
+clear a window.** Use a scratch file in a temp directory, launch your own
+instance, and close only that. `scripts/lib/cua-client.mjs` exports `safeKill()`,
+which refuses unless the window is one the harness launched **and** its title
+matches the expected scratch pattern.
+
+The manifest's `terminate: driver_launched` exists for exactly this reason.
 
 ## Delivery: background is mandatory first
 
