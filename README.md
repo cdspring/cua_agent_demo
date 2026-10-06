@@ -17,25 +17,58 @@ parameters buys 1.4 more points.
 So the interface is the capability, not the weights. That is what this
 repository implements.
 
+## Start here
+
+```powershell
+node scripts\install.mjs            # install into the DETECTED global config and skills dir
+node scripts\doctor-project.mjs     # is the installed system still the documented system?
+node scripts\verify-all.mjs         # run the gating suites
+node scripts\verify-all.mjs --list  # the index of all 35 registered scripts
+```
+
+`install.mjs` probes where OpenCode actually reads rather than assuming, and
+refuses four things on purpose: upgrading `cua-driver`, switching the permission
+mode, splicing the MCP entry into hand-edited jsonc, and rewriting manifest
+paths. Each refusal exists because the opposite caused a problem here.
+
 ## Layout
 
 ```
-opencode.jsonc                                    config + verified permission action names
+opencode.jsonc                                    reference copy of the config; the LIVE
+                                                one is ~/.config/opencode/opencode.jsonc
 config/
   cua-bounded.yaml                                capability manifest for bounded mode
-  cua-policy.yaml                                 agent-layer argument policy
+  cua-policy.yaml                                 argument policy. Correct and verified, but
+                                                NOT wired into any runtime by decision
 .opencode/
-  plugins/computer-use.ts                         fallback backend: 3 tools
+  plugins/computer-use.ts                         legacy READ-ONLY backend: 2 tools
+                                                (capture, diagnose). No action tools.
   skills/computer-use/
-    SKILL.md                                      the procedure
+    SKILL.md                                      the procedure, incl. the feasibility gate
     references/routing.md                        seven layers, ladders, host capability tables
-    references/decision-table.json               routing, effects and refusals, tabulated
-                                               (reference only; nothing reads it at runtime)
+    references/decision-table.json               routing, effects and refusals, tabulated.
+                                                VALIDATED against the installed driver by
+                                                check-docs.mjs, not just documentation
     references/recipes.md                         worked task flows
     references/troubleshooting.md                 failure modes
-    scripts/cu.ps1                                Win32 actions: SendInput, BitBlt
-scripts/resolve-mcp-permission-action.ps1         derives MCP action names from the CLI
+    scripts/cu.ps1                                Win32 capture and diagnosis
+scripts/
+  lib/cua-client.mjs                              shared MCP client: fresh(), feasibility(),
+                                                tally(), safeKill(), refusals{}
+  lib/opencode-paths.mjs                          probes /api/config and /api/skill
+  lib/suites.mjs                                  the registry: active / record / diagnostic
+  install.mjs  doctor-project.mjs                 lifecycle
+  verify-all.mjs                                  the single entry point
+  check-convergence.mjs                           how many scripts bypass the shared client
+  check-exemption-risk.mjs                        standing invariant over those exemptions
+  check-docs.mjs                                  validates docs and the table against the driver
+  verify-*.mjs probe-*.mjs                        the suites themselves
 ```
+
+The skill is installed to `~/.agents/skills/computer-use/`, **not** into this
+repository's `.opencode/skills/`. OpenCode's server is rooted at the home
+directory, so a skill in a project directory is never discovered — a file on disk
+is not a loaded skill. `install.mjs` copies it and `/api/skill` confirms it.
 
 ## Two backends
 
