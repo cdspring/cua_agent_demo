@@ -1,4 +1,4 @@
-// Validate the machine-readable routing table and scan the docs for stale claims.
+﻿// Validate the machine-readable routing table and scan the docs for stale claims.
 import { readFileSync } from "node:fs"
 
 const d = JSON.parse(readFileSync(".opencode/skills/computer-use/references/decision-table.json", "utf8"))
@@ -64,6 +64,8 @@ const UNRELATED = new Set([
   // tools, the hand-written fallback's old tool names, and the manifest key.
   "escalate_session", "page", "get_session_state",
   "computer_screenshot", "computer_screen", "computer_act", "allow",
+  // The plugin now names its read-only tools computer_capture / computer_diagnose.
+  "computer_capture", "computer_diagnose",
   // Policy vocabulary and structuredContent fields from Phase 5.
   "allow", "rules", "max_length", "min", "pattern", "allowed", "required",
   "constraints", "duration_ms", "durationMs", "executable", "element_count",
@@ -81,3 +83,4 @@ const UNRELATED = new Set([
 const suspects = [...mentioned].filter((m) => !REAL_TOOLS.has(m) && !UNRELATED.has(m) && /^[a-z][a-z0-9_]*$/.test(m))
 console.log("\nbackticked identifiers in docs that are neither real tools nor known noise:")
 console.log(suspects.length ? suspects.map((s) => `  ${s}`).join("\n") : "  (none)")
+
