@@ -32,9 +32,38 @@ function raw(tool, args = {}) {
 }
 const sc = (r) => r?.structuredContent ?? r ?? {}
 const wins = () => raw("list_windows", { session: S }).json?.windows ?? []
-const cursor = () => {
+
+// The driver's get_cursor_position is SESSION-scoped: it reports the agent cursor
+// overlay, and the driver documents that "a pure accessibility (AX) action snaps
+// the cursor with a brief pulse on its first action". So for a UIA write it
+// moves ON PURPOSE, and whether the pulse had finished between two reads is a
+// timing race.
+//
+// An earlier revision asserted that this cursor stays put. It failed
+// intermittently -- 5/6 on one run, 4/6 on the next -- and the cause was the
+// assertion, not the driver. The property that actually matters is that the REAL
+// OS cursor does not move, so read that instead, from outside the driver.
+const agentCursor = () => {
   const c = sc(raw("get_cursor_position", { session: S }).json)
   return { x: c.x, y: c.y }
+}
+const realCursor = () => {
+  try {
+    const out = execFileSync(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-Command",
+        "Add-Type -Namespace N -Name P -MemberDefinition '[DllImport(\"user32.dll\")] public static extern bool GetCursorPos(out System.Drawing.Point p);' -UsingNamespace System.Drawing -ErrorAction SilentlyContinue; " +
+          "$p = New-Object System.Drawing.Point; [void][N.P]::GetCursorPos([ref]$p); \"$($p.X),$($p.Y)\"",
+      ],
+      { encoding: "utf8", timeout: 25000 },
+    ).trim()
+    const [x, y] = out.split(",").map(Number)
+    return { x, y }
+  } catch {
+    return null
+  }
 }
 
 const results = []
@@ -111,7 +140,24 @@ console.log("\n--- set_value ---")
     const after = docText(snap()).value
     console.log(`  doc: ${JSON.stringify(before)} -> ${JSON.stringify(after)}`)
     record("set_value changes the document", !res.refusal && after.includes("alpha-42"), `"${after.slice(0, 60)}"`)
-    record("set_value reports confirmed", res.effect === "confirmed", `effect=${res.effect ?? res.status}`)
+    // Assert the OUTCOME, not the wording.
+  //
+  // This route returns effect: "unverifiable", not "confirmed", and carries no
+  // `status` field. `unverifiable` is a documented value meaning delivery could
+  // not self-prove the write; it is not a failure, and the driver's own guidance
+  // is to re-observe. The write does land -- the check above reads it back out of
+  // the document. So the postcondition is the document, and `unverifiable` is
+  // recorded as the expected value rather than asserted against.
+  //
+  // An earlier revision required effect === "confirmed" and failed. A revision
+  // before that required effect on type_text and also failed. Both were testing
+  // the provider's phrasing, which is free to change without anything breaking.
+  const effect = res.effect ?? res.status ?? "(absent)"
+  record(
+    "set_value reports a known effect value",
+    !res.refusal && ["unverifiable", "confirmed", "ok"].includes(effect),
+    `effect=${effect} route=${res.route ?? "-"} summary=${JSON.stringify(res.summary ?? "").slice(0, 80)}`,
+  )
   }
 }
 
@@ -124,10 +170,12 @@ console.log("\n--- type_text ---")
     record("type_text dispatches", false, "no Edit/Document element exposed")
   } else {
     const before = docText(s).value
-    const cBefore = cursor()
+    const cBefore = realCursor()
+  const agentBefore = agentCursor()
     const zBefore = wins().find((w) => w.window_id === window_id)?.z_index
     const res = sc(raw("type_text", { element_token: field.element_token, pid, text: "XYZ", session: S }).json)
-    const cAfter = cursor()
+    const cAfter = realCursor()
+  const agentAfter = agentCursor()
     const zAfter = wins().find((w) => w.window_id === window_id)?.z_index
     console.log(`  effect=${res.effect ?? res.status} route=${res.route ?? "-"} delivery=${JSON.stringify(res.delivery ?? null)}`)
     console.log(`  summary: ${JSON.stringify(res.summary ?? res.refusal ?? null).slice(0, 240)}`)
@@ -136,7 +184,7 @@ console.log("\n--- type_text ---")
     const after = docText(snap()).value
     console.log(`  doc: ${JSON.stringify(before.slice(-40))} -> ${JSON.stringify(after.slice(-40))}`)
     record("type_text appends to the document", after.includes("XYZ") && after.length > before.length, `len ${before.length} -> ${after.length}`)
-    record("type_text leaves the cursor put", cBefore.x === cAfter.x && cBefore.y === cAfter.y, `${cBefore.x},${cBefore.y} -> ${cAfter.x},${cAfter.y}`)
+    record("type_text leaves the REAL OS cursor put", cBefore && cAfter && cBefore.x === cAfter.x && cBefore.y === cAfter.y, `real ${cBefore?.x},${cBefore?.y} -> ${cAfter?.x},${cAfter?.y}   agent overlay ${agentBefore.x},${agentBefore.y} -> ${agentAfter.x},${agentAfter.y} (the overlay pulse is documented behaviour)`)
     // z going DOWN means something else moved above it, which is the opposite of
     // being raised. Assert "not raised", not "unchanged": a human on the same
     // desktop can legitimately change z-order between the two reads.

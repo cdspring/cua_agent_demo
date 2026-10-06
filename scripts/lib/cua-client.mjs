@@ -216,15 +216,29 @@ export async function safeKill(c, w, { owned = [], expectTitle = null, force = f
   return { killed: r.ok, code: r.code }
 }
 
-/** Collects pass/fail so a script ends with one honest summary. */
+/** Collects pass/fail/skip so a script ends with one honest summary. */
 export function tally() {
   const rows = []
   return {
     rows,
     check(name, pass, detail) {
-      rows.push({ name, pass: !!pass })
+      rows.push({ name, pass: !!pass, state: pass ? "PASS" : "FAIL" })
       console.log(`  ${pass ? "PASS" : "FAIL"}  ${name}${detail ? `\n        ${detail}` : ""}`)
       return !!pass
+    },
+    /**
+     * Not applicable, as distinct from failed.
+     *
+     * A browser test must not fail when no browser is open, and a task against
+     * an app that is not running must not be reported as a regression. Without
+     * this, verify-phase4 reported five failures that were really four absent
+     * targets plus one genuinely undrivable app, and nothing could tell them
+     * apart.
+     */
+    skip(name, why) {
+      rows.push({ name, pass: true, state: "SKIP", why })
+      console.log(`  SKIP  ${name}\n        ${why}`)
+      return true
     },
     /** Assert a call succeeded. Fails loudly on the codes that mean "unknown". */
     ok(name, r, detail) {
@@ -237,9 +251,11 @@ export function tally() {
     },
     report() {
       console.log("\n================ SUMMARY ================")
-      for (const r of rows) console.log(`${r.pass ? "PASS" : "FAIL"}  ${r.name}`)
+      for (const r of rows) console.log(`${(r.state ?? (r.pass ? "PASS" : "FAIL")).padEnd(6)} ${r.name}`)
       const failed = rows.filter((r) => !r.pass).length
-      console.log(`\n${rows.length - failed}/${rows.length} passed`)
+      const skipped = rows.filter((r) => r.state === "SKIP").length
+      const passed = rows.length - failed - skipped
+      console.log(`\n${passed}/${rows.length} passed${skipped ? `, ${skipped} skipped` : ""}`)
       return failed === 0
     },
   }

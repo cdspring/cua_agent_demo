@@ -16,6 +16,31 @@ first, foreground only after a real refusal.
 
 `references/decision-table.json` tabulates the same routing for this version.
 
+### Where these files live
+
+This skill is installed globally at
+`~/.agents/skills/computer-use/`, **not** in a project directory. That matters:
+OpenCode's server here is rooted at the home directory, so a skill sitting in a
+project's `.opencode/skills/` is never discovered. A skill file on disk is not a
+loaded skill — confirm with `/api/skill`.
+
+Inside the installed directory:
+
+```
+SKILL.md                    this file
+references/routing.md       the decision procedure
+references/*.json|md        supporting tables and worked flows
+scripts/cu.ps1              legacy read-only capture backend
+scripts/lib/cua-client.mjs  shared MCP client, used by the probe scripts
+scripts/probe-feasibility.mjs  asks "can this app be driven" for every window
+scripts/probe-app-owners.mjs   which executable owns each window
+```
+
+In the git repository those two probe scripts live under the repository's
+`scripts/`, not under `.opencode/skills/computer-use/scripts/`; the installer
+copies them in. If you are reading the repo rather than the installed copy, that
+is why the relative path looks wrong.
+
 ## Backends
 
 | Backend | Tools | Status |

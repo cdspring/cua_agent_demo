@@ -321,6 +321,7 @@ Everything above was a working system that **was not loaded**. Five phases of
 hand-built wiring, and the skill the whole project exists to teach was invisible
 to the model the entire time.
 
+
 #### M1 — the skill was never loaded
 
 `/api/skill` lists every skill the running server has actually loaded. On this
@@ -419,6 +420,77 @@ mode decision intact.
 Neither was open before this work. Both need closing by hand. `kill_app` refuses
 because the launching MCP child has exited — which is the same guard that would
 have prevented the original Notepad incident.
+
+
+### Phase 7 — the framework itself
+
+Every phase so far verified one thing. Nobody could ask "is this healthy?" in one
+command, and thirty-two scripts had grown with no index.
+
+#### `verify-all.mjs` — one entry point
+
+```
+node scripts/verify-all.mjs             the active suites
+node scripts/verify-all.mjs --record    plus the historical ones
+node scripts/verify-all.mjs --list      the index
+node scripts/verify-all.mjs --only a,b  named suites
+```
+
+Current state: **7 active suites pass, exit 0.** Scripts are classified in
+`lib/suites.mjs` into three kinds:
+
+- **active** — gates. Expected to pass.
+- **record** — documentation. Expected to report a limitation, and **never
+  gates**, because reporting a durable finding as FAIL invites someone to "fix"
+  it into a bug.
+- **diagnostic** — one-shot investigations, kept because re-deriving a conclusion
+  costs a session. Run by hand.
+
+#### Four defects the entry point found immediately
+
+**1. `verify-coords.mjs` was classified active but cannot run.** It resolves its
+target by window title and only knows Calculator, which no longer exists — it
+exits `no calculator`. Reclassified as record.
+
+**2. `verify-input.mjs` failed 1 check in 2, then 2 checks in 1.** Not flaky
+hardware: two of its assertions were wrong.
+
+- `set_value reports confirmed` required `effect === "confirmed"`. That route
+  returns `effect: "unverifiable"` — a documented value meaning delivery could
+  not self-prove the write — and the write lands regardless. The test was
+  asserting the provider's *phrasing*.
+- `type_text leaves the cursor put` used `get_cursor_position`, which is
+  **session-scoped to the agent cursor overlay**. The driver documents that "a
+  pure accessibility (AX) action snaps the cursor with a brief pulse on its first
+  action", so it moves *by design* — and whether the pulse had finished between
+  two reads is a race. That was the 5/6-then-4/6. It now reads the real OS cursor
+  from outside the driver.
+
+Same lesson as everywhere else in this project: **assert the outcome, not the
+action fact.**
+
+**3. `verify-mcp.mjs` listed `wait` among the tools that should exist.** There is
+no `wait` tool in 0.34.0; `routing.md` and `SKILL.md` both say so explicitly. My
+checker disagreed with my own documentation. Removed.
+
+**4. A test failed because a target was not running.** `verify-phase4.mjs`
+reported four failures for Obsidian and WeChat that were simply absent. A browser
+test must not fail when no browser is open. Added a **SKIP** state, distinct from
+both pass and fail, so "not applicable" is not silently a regression.
+
+#### The skill's own path ambiguity
+
+The installed skill references `scripts/probe-feasibility.mjs`. In the repo that
+file is under `scripts/`, not under `.opencode/skills/computer-use/scripts/`; the
+installer copies it in. SKILL.md now states the installed layout explicitly and
+says why the repo path looks wrong.
+
+#### Known finding, deliberately left visible
+
+`actions-on-calculator` reports `D3 real cursor unmoved by foreground click:
+1433,1095 -> 1999,1574`. **Foreground delivery moved the real pointer**, which is
+consistent with it being an explicit foreground escalation rather than a
+background action. It is printed as a finding, not suppressed and not declared
 
 ### Phase 4 — real tasks
 

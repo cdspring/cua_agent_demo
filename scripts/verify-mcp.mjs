@@ -106,7 +106,11 @@ const ok = (label, cond, detail) => {
     "bring_to_front",
     "verify_state",
     "zoom",
-    "wait",
+    // `wait` was listed here at some point. There is no wait tool in 0.34.0 --
+    // routing.md and SKILL.md both say so explicitly -- so this list was stale and
+    // the check correctly reported it missing. Remove a name from this list when
+    // the driver does not have the tool, rather than leaving the docs and the
+    // checker disagreeing.
   ]
   const missing = expected.filter((n) => !names.has(n))
   ok("every tool named in routing.md exists", missing.length === 0, missing.length ? `missing: ${missing.join(", ")}` : "")
