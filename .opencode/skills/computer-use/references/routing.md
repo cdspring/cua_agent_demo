@@ -36,7 +36,96 @@ Its `type` lands on the focused window with no target binding, which is how
 this project typed into a browser tab during development. Keep it for offline
 capture and diagnosis.
 
+### The browser DOM route is two stages, not one
+
+`browser_prepare` does **not** mint a target id. It only prepares an endpoint.
+The id is minted by `get_browser_state` in bind mode, which needs the prepared
+browser's own `(pid, window_id)`. Expecting `target_id` in the prepare response is
+the natural first mistake; `scripts/probe-browser-dom.mjs` makes that mistake in
+a comment and then does it correctly.
+
+Attaching to the user's running profile is refused:
+
+```
+browser_prepare {pid, window_id}
+  -> browser_requires_setup: no owned endpoint is available;
+     pass allow_launch=true with an isolated profile and verified approval
+```
+
+The refusal names its own remedy. Taking it works, and the isolated profile never
+touches the real one:
+
+```
+browser_prepare {allow_launch: true, profile: {mode: "isolated_new"}}
+  -> ok  prepared_pid=<n>
+     side_effects: created_profile true, changed_preferences false,
+                   copied_profile_data false, enabled_remote_debugging false,
+                   injected_global_input false, foregrounded_window false
+
+get_browser_state {pid: prepared_pid, window_id: <its hwnd>}   -> mints target_id + tab_id
+get_browser_state {target_id, tab_id, snapshot_format: "semantic_v2"}
+```
+
+Verified end to end: navigated the throwaway profile to `https://example.com` and
+read back the real page through the semantic outline, including the Chinese,
+English and Arabic paragraphs. 1 action ref, 13 content refs.
+
+`isolated_named` reuses a driver-owned named profile; `isolated_new` throws one
+away. Either way it is not the user's profile.
+
+`browser_screenshot` is separately gated and returned
+`permission_denied: tool 'browser_screenshot' has no reviewed risk classification`
+in this runtime. A missing risk classification is a permission decision, not a
+malfunction.
+
+CDP needs no foreground window, which is why this rung survives an environment
+where foreground activation does not.
+
 ## L2 — What to observe
+
+### Feasibility gate, before anything else
+
+**This agent can only drive an application that exposes an accessibility tree,
+or a DOM reachable over CDP. Measured on this machine:**
+
+| App surface | Tree | Pixel (background) | Pixel (foreground) | DOM | Drivable? |
+|---|---|---|---|---|---|
+| Notepad, Obsidian, WeChat | yes | n/a | n/a | no | **yes, via the tree** |
+| Chromium / Edge | yes (shallow) | n/a | n/a | yes | **yes, via the tree or DOM** |
+| `CalculatorApp.exe` (new build) | **none** | silently no-ops | **unavailable** | no | **no** |
+
+`CalculatorApp.exe` exposes zero elements at `max_depth` 12, 25 and 40, in both
+`standard` and `bounded` mode — `scripts/probe-calculator.mjs` is the control that
+rules out a permission artifact. A background pixel click returns
+`tool_invocation_failed` carrying the text `operation completed successfully
+(0x00000000)`, and **the display does not change**: pressing `C` did not clear it.
+That `S_OK` is the return of the `PostMessage` call itself, not of the click.
+Reading it as success is precisely the mistake the driver's own WORKFLOW.md warns
+about, and it is invisible unless you re-observe.
+
+The escalation that is supposed to cover this also fails here:
+
+```
+delivery_mode: "foreground"
+  -> foreground_unavailable: Windows did not activate exact target HWND 0x5065e
+     (actual foreground HWND 0x0); no mouse input was sent
+
+bring_to_front
+  -> raised in z-order, but Windows kept foreground on hwnd 0x0
+```
+
+Root cause, checked three ways: the window station is `WinSta0`, the desktop is
+`Default`, the session is 4 (the console session) — all correct — and
+`GetForegroundWindow()` still returns `0x0`. The desktop simply has no foreground
+window, so `SetForegroundWindow` cannot succeed. `bring_to_front` uses
+`AttachThreadInput` to defeat the foreground lock and still cannot.
+
+**Consequence: for an application with neither a tree nor a DOM, there is no
+working rung in this deployment. Check the tree first and say so, rather than
+clicking into a void.** A capability the driver exposes in principle can be
+unreachable in a given environment, and only a measurement distinguishes the two.
+
+### Observation calls
 
 | Call | Returns | Use when |
 |---|---|---|
@@ -82,19 +171,30 @@ cut uncached input from 71,088 to 12,251 tokens with these bounds.
 The replacement response lists the old ids in `invalidated_snapshot_ids`. Take
 one `get_window_state` per turn per window before any element action.
 
-### Two coordinate spaces
+### Three coordinate spaces
 
 This is the most reliable way to get a `capture_coordinate_invalid` refusal:
 
 | Source | Space |
 |---|---|
 | `element.frame` | **Desktop** absolute pixels |
-| `x,y` with `capture_id` | **Window-local** screenshot pixels |
+| `x,y` with `capture_id` | **Screenshot** pixels, i.e. the window scaled |
 | `x,y` with `scope: "desktop"` | Screen pixels |
 
 `local = frame - window_bounds.origin`. Verified: element frame
 `{x:1529,y:390,w:64,h:64}` with window origin `(779,309)` became local
 `(782,113)`, which dispatched; the desktop value `(1561,422)` was refused.
+
+**The screenshot space is the trap.** It is not always window-local. When
+`max_image_dimension` is set, the screenshot is downscaled and a capture-bound
+click is validated against the *downscaled* image. Measured: an 828x1064 window
+requested at `max_image_dimension: 900` came back as roughly 700x900, and
+window-local coordinates of `(718,1002)` were refused as out of range. Two fixes,
+either is fine:
+
+- pass `max_image_dimension: 0` for native pixels, so screenshot space equals
+  window-local space and an image can be read and its coordinates used directly;
+  or scale the coordinates by `window_bounds / screenshot_width,height`.
 
 `capture_id` is **optional**. Omitting it still works and routes through
 `synthetic_events`; supplying it admits the coordinates against that exact

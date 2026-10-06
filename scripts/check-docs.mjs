@@ -49,6 +49,21 @@ const UNRELATED = new Set([
   "capture_mode", "query", "x", "y", "label_contains", "text", "session", "codemode", "os", "value", "label",
   "role", "index", "frame", "true", "false", "null", "token", "name", "actions", "tool", "tools", "shell",
   "question", "browser", "browser_prepare", "z_index", "minimized", "bounds", "title", "app_name",
+  // Added with the Phase 4 browser and feasibility work. Each is a real driver
+  // identifier, not prose: tool names, enum values, refusal codes and
+  // structuredContent field names that appear in the docs.
+  "browser_screenshot", "browser_navigate", "get_browser_state",
+  "target_id", "tab_id", "prepared_pid", "isolated_new", "isolated_named", "allow_launch",
+  "tool_invocation_failed", "foreground_unavailable", "capture_coordinate_invalid",
+  "permission_denied", "browser_requires_setup", "ax_tree_empty", "degraded_reason",
+  "delivery_mode", "scope_ref", "window", "element", "selector", "exists", "enabled", "selected",
+  "standard", "bounded", "unrestricted", "resources", "apps", "executable", "launch", "windows",
+  "terminate", "is_on_screen", "minimized", "wait", "effect", "effect_unconfirmed", "reason",
+  "route", "routes", "escalation", "target", "pixel", "scale", "type",
+  // Deliberate references to things that must NOT be called: the deprecated
+  // tools, the hand-written fallback's old tool names, and the manifest key.
+  "escalate_session", "page", "get_session_state",
+  "computer_screenshot", "computer_screen", "computer_act", "allow",
 ])
 const suspects = [...mentioned].filter((m) => !REAL_TOOLS.has(m) && !UNRELATED.has(m) && /^[a-z][a-z0-9_]*$/.test(m))
 console.log("\nbackticked identifiers in docs that are neither real tools nor known noise:")

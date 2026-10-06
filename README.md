@@ -215,8 +215,9 @@ Run on this machine against cua-driver 0.34.0.
 | `press_key` | dispatches via `synthetic_events`, `effect: unverifiable` |
 | `launch_app` hidden | launched without stealing focus |
 
-Not yet proven: the `set_value` success path, `background_unavailable` →
-foreground escalation (needs an Electron host), `invoke_menu`.
+Not yet proven: the `set_value` success path, `invoke_menu`. The
+`background_unavailable` → foreground escalation is now measured and is
+**unreachable on this machine** — see Phase 4 below.
 
 ### Phase 4 — real tasks
 
@@ -225,31 +226,81 @@ postcondition from a fresh observation rather than trusting action feedback.
 
 | Task | Result |
 |---|---|
-| Calculator: 7 × 6 = | **PASS** — display read back as 42 after four background AX clicks |
+| Calculator: 7 × 6 = | **PASS** on the old build; **not drivable** on the new one — see below |
 | Notepad: mixed CJK + ASCII | **PASS** — `type_text` twice, both `effect: confirmed`, document read back as `phase4 seed / ASCII-123 中文输入 OK` |
-| Browser DOM route | not testable — neither Edge nor Chrome is running |
-| Obsidian / WeChat addressability | WeChat **PASS** (minimized, tree degraded to 1 element); Obsidian not testable, not running |
+| Browser DOM route | **PASS** — `scripts/probe-browser-dom.mjs`, real page content read over CDP |
+| Obsidian / WeChat addressability | Obsidian **PASS** (125 elements, 108 named); WeChat **PASS** (minimized, tree degraded to 1 element) |
 
 No input was sent to Obsidian or WeChat, by design: they hold the user's notes
 and messages.
 
-Four findings from this round:
+#### The finding that matters most
 
-- **Calculator's keypad is 6 rows × 4 columns of 200px buttons, and the digits
-  start at row 2.** Rows 0 and 1 are functions (percent, CE, C, backspace,
-  reciprocal, square, root, divide). An earlier revision assumed row 0 held the
-  digits, pressed percent then divide, and reported 9. Locating keys by
-  geometry rather than label is what made this reliable — the labels are
-  localised and arrive mojibake'd through a Windows console.
-- **`=` is required.** Without it the calculator shows the running expression
-  and never produces the product, which reads as "the click did nothing".
+**This agent can only drive an app that exposes an accessibility tree or a DOM.
+For an app with neither, there is no working rung in this deployment.**
+
+A Windows update replaced the Calculator with a self-hosted
+`CalculatorApp.exe` that exposes **zero** accessibility elements — at
+`max_depth` 12, 25 and 40, in both `standard` and `bounded` mode
+(`scripts/probe-calculator.mjs` is the control). The driver says so itself:
+
+```
+degraded=true  reason="ax_tree_empty: the UIA walk returned no actionable
+elements ... switch to the visual path."
+```
+
+The visual path then fails twice over:
+
+- **background pixel click** → `tool_invocation_failed` carrying the text
+  `操作成功完成(0x00000000)`, i.e. Win32 `S_OK` — and **the display did not
+  change**. Pressing `C` did not clear it. That `S_OK` is the return of the
+  `PostMessage`, not of the click. Reading it as success is exactly the mistake
+  the driver's WORKFLOW.md warns about, and it is invisible without re-observing.
+- **foreground escalation** → `foreground_unavailable: Windows did not activate
+  exact target HWND 0x5065e (actual foreground HWND 0x0)`. `bring_to_front`,
+  which uses `AttachThreadInput` to defeat the foreground lock, fails the same
+  way. Root cause checked three ways: window station `WinSta0`, desktop
+  `Default`, session 4 (console) — all correct — while `GetForegroundWindow()`
+  returns `0x0`. The desktop has no foreground window, so `SetForegroundWindow`
+  cannot succeed.
+
+So `background_unavailable` → foreground escalation, previously listed as
+unproven, is now known to be **unreachable on this machine**. A capability the
+driver exposes in principle can be unavailable in a given environment, and only a
+measurement tells the two apart.
+
+#### Three more findings from this round
+
+- **A capture-bound pixel click is validated in the *screenshot's* pixel space,
+  not window-local.** With `max_image_dimension: 900`, an 828×1064 window is
+  downscaled to ~700×900 and window-local `(718,1002)` is refused as
+  `capture_coordinate_invalid`. Pass `max_image_dimension: 0` for native pixels,
+  or scale by `window_bounds / screenshot_width,height`. There are three
+  coordinate spaces, not two.
+- **The browser DOM route is two stages.** `browser_prepare` prepares an endpoint;
+  `get_browser_state(pid, window_id)` is what mints `target_id` and `tab_id`.
+  Expecting an id from the prepare response is the natural first mistake.
+  Attaching to the user's running profile is refused with
+  `browser_requires_setup`, and that refusal names its own remedy —
+  `allow_launch: true` with `profile: {mode: "isolated_new"}`, which touches
+  neither the real profile nor its cookies.
+- **Calculator's keypad is 6 rows × 4 columns of 200px buttons, digits starting
+  at row 2**; rows 0 and 1 are functions (percent, CE, C, backspace, reciprocal,
+  square, root, divide). An earlier revision assumed row 0 held the digits,
+  pressed percent then divide, and reported 9. Locating keys by geometry rather
+  than label is what made this reliable — the labels are localised and arrive
+  mojibake'd through a Windows console. `=` is required; without it the
+  calculator shows the running expression and reads as a click that did nothing.
 - **Minimized windows keep their permission but lose their tree.** WeChat
-  minimized exposed 1 element against 8 when visible.
+  minimized exposed 1 element against 8 when visible. Do not read a small element
+  count on a minimized window as a permission problem.
 - **Two harness bugs that looked like driver bugs.** Notepad text appeared to
-  triple: the harness matched a stale window by a loose title pattern and
-  appended to a previous buffer. It also reset scratch state by rewriting a file
-  on disk while Notepad kept its buffer. Both are recorded in the script so the
-  next person does not re-diagnose them.
+  triple: the harness matched a stale window by a loose title pattern and appended
+  to a previous buffer. It also "reset" state by rewriting a file on disk while
+  Notepad kept its buffer. A third: an action order written as an object literal
+  was reordered at runtime, because `Object.entries` hoists integer-like keys
+  (`"6"`, `"7"`) ahead of string keys — it pressed 6, 7, C, ×, =. All three are
+  recorded in the scripts so the next person does not re-diagnose them.
 
 Encoding note: CJK literals in the verification scripts are written as `\u`
 escapes. PowerShell's `Set-Content -Encoding UTF8` corrupted an embedded

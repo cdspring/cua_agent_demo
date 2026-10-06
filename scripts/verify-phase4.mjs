@@ -135,7 +135,23 @@ const docValue = (s) => (s.elements ?? []).find((e) => /^(Edit|Document)$/i.test
       record("Task 1 Calculator reachable under bounded", false, "window never appeared")
     } else {
       console.log(`  window: pid=${calc.pid} owner=${calc.app_name}`)
-      const s0 = await snapshot(calc)
+
+      // Poll for the keypad. A freshly launched Calculator exposes its window
+      // before its button grid is in the UIA tree, so a single immediate
+      // snapshot yields zero 200px buttons and the task fails for a reason that
+      // has nothing to do with permissions.
+      const GRID_W = 200
+      let s0 = {}
+      for (let i = 0; i < 10; i++) {
+        s0 = await snapshot(calc)
+        const grid = (s0.elements ?? []).filter((e) => e.role === "Button" && Math.round(e.frame?.w ?? 0) === GRID_W)
+        if (grid.length >= 12) {
+          console.log(`  keypad visible after ${i + 1} snapshot(s): ${grid.length} grid buttons`)
+          break
+        }
+        console.log(`  snapshot ${i + 1}: ${(s0.elements ?? []).length} elements, ${grid.length} grid buttons`)
+        await sleep(1200)
+      }
       const buttons = (s) => (s.elements ?? []).filter((e) => e.role === "Button" && (e.actions ?? []).includes("invoke"))
 
       // Identify the keypad by GEOMETRY. Labels are localised and arrive
