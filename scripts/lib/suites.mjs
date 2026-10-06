@@ -154,6 +154,7 @@ export const SUITES = [
   { name: "cleanup-windows", script: "cleanup-windows.mjs", class: "lifecycle", why: "polite close for classic Win32 windows, orphan client sweep" },
   { name: "phase2-legacy", script: "verify-phase2.mjs", class: "diagnostic", why: "the original Phase 2 daemon checks; superseded by mcp-handshake and bounded-mode" },
   { name: "xhs-public-channel", script: "probe-xhs-public.mjs", class: "diagnostic", why: "measures whether the DOM rung carries content on a logged-out public SPA. Read-only, throwaway profile" },
+  { name: "exemption-risk", script: "check-exemption-risk.mjs", class: "lifecycle", why: "asserts un-converged scripts still classify refusals by CODE, so an exemption cannot silently become a lie" },
 ]
 
 /** Suites that gate. A false PASS here is the expensive failure. */

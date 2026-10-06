@@ -315,6 +315,122 @@ reaching around it.
 - SKILL.md gained a **Step 0 feasibility gate** before look/locate/act/verify,
   and a "never terminate an app you did not launch" section.
 
+#### The DOM channel on a logged-out SPA — measured, and it works
+
+`scripts/probe-xhs-public.mjs`, throwaway driver-owned profile, no login, no
+cookies, public entry pages only, no creator or note URLs:
+
+```
+navigate -> ok    (xiaohongshu.com/explore)
+snapshot -> ok    266 action refs, 34 content refs
+outline: 298 lines
+```
+
+Each note card appears in the DOM as title, author, and one number:
+
+```
+link "山东人嘴真严！这么嘎嘣脆的脆桃硬是不宣传"
+link  "鲜源农场"
+statictext "鲜源农场"
+statictext "745"
+```
+
+Eighteen cards, all the same shape: `745`, `6262`, `10万`, `1826`, `1.2万`,
+`7744`, `3.8万`, `9830`. Category navigation is present too.
+
+Three limits, stated rather than glossed:
+
+1. **There is a login wall.** `登录后推荐更懂你的笔记`, a `+86` field, `扫码`,
+   `新用户可直接登录`. A logged-out visitor sees the public recommendation feed,
+   not personalised content.
+2. **The single number per card has no label.** It is most likely the like count,
+   inferred from position. *Not verified.* Treating it as a definite field would
+   be a guess, and a guess feeding an analysis makes the conclusion a guess.
+3. **Not measured:** follower counts, note detail pages, comments. Those probably
+   need a login.
+
+**What remains in the way is authentication, not the channel.** The two routes
+are: the user logs into the driver-owned isolated browser themselves (their
+account, their session, no evasion involved, but the profile is disposable), or
+the agent attaches to their normal Edge via `--grant existing-profile`, which is
+measured non-functional — the flag is `serve`-only, `mcp` ignores it silently,
+and starting `serve` with it still returns `browser_requires_setup` with
+`authorization host: unavailable`.
+
+**A correction worth recording.** I previously concluded this stack had no usable
+channel here. That was wrong. The probe was reading `tabs[0].id` where the field
+is `tabs[0].tab_id`, so `navigate` answered `Missing required string field:
+tab_id` and `snapshot` answered `browser_tab_required` — and I summarised my own
+harness bug as "the site is empty". The script now asserts the id is present
+before drawing any conclusion, and refuses to report otherwise.
+
+#### Convergence, and why the gating scripts were not migrated
+
+`check-convergence.mjs` measures rather than asserts, and classifies by transport:
+a script shelling out to `cua-driver call` does not need the MCP client and
+should not count against the number. It also found **seven scripts running outside
+the registry entirely** — unlisted scripts still run, still hold findings, and
+rot unnoticed. All are registered.
+
+The stated plan was to migrate the two gating suites. **The audit said not to:**
+
+| | `element_token` uses | refusal comparisons by code | prose matches |
+|---|---|---|---|
+| `verify-bounded` | **0** | 14 | **0** |
+| `probe-browser-dom` | **0** | 7 | **0** |
+
+Neither uses `element_token`, so the one-use-token footgun cannot occur; neither
+matches response prose, so the `refusals{}` map replaces nothing. Rewriting two
+passing gates — one of them 21 checks — to satisfy a metric with no measured
+defect would risk a working gate for a number.
+
+So the audit became a **standing invariant** instead of a note:
+`check-exemption-risk.mjs` asserts that every un-converged script still
+classifies refusals by code. An exemption that stops being true now fails.
+
+That checker took three attempts, each one wrong in an instructive way:
+
+- v1 tried to detect the footguns and produced **nine flags, all false positives** —
+  `inputSchema.properties.element_token` is schema inspection; `verify-bounded`'s
+  regexes read the manifest file, the startup stdout and window `app_name`; and
+  two `type_text` calls sharing one token is *legal*, since only a new snapshot
+  invalidates, not an action.
+- v2 inverted to a positive property but tested `tools/call` against
+  comment-stripped source — and that marker lives in a string literal, which the
+  stripper removes. Every script came back out of scope, so the invariant was
+  vacuous while appearing to pass.
+- v3 scopes by raw source and asserts the positive property. 15 in-scope scripts
+  pass; 3 are correctly out of scope because they never classify a refusal at all.
+
+Convergence: **8 of 21 scripts that could converge, do. 4 exempt with cause.
+0 gating stragglers.**
+
+#### The decision table is now checked against the installed driver
+
+`check-docs.mjs` previously hardcoded a 59-name tool list and used
+`decision-table.json` only to confirm it parsed as JSON. A hardcoded list cannot
+notice a driver upgrade, and a table nobody cross-checks drifts into folklore.
+
+It now derives the tool list from `cua-driver list-tools` at run time, and fails
+if the pinned version differs, a documented tool is absent, or an observed
+refusal code is missing. Doing that found two real inaccuracies immediately:
+
+- **`capture_mode` was listed under `deprecated` as if it were a tool.** It is a
+  parameter on `get_window_state`, so the table conflated two kinds of deprecation
+  in one list. They are now separate.
+- **The refusals list held six codes, not one of which had ever been observed** —
+  while every code actually hit during this project was missing. The table was
+  written from documentation rather than measurement.
+
+Table is now version 3: twelve refusals, each annotated with where it was
+observed, or explicitly marked documented-but-unobserved.
+
+#### The B4 channel finding
+
+Recorded above. It is the fact that decides whether the original goal is worth
+more engineering, and it was measured rather than assumed — twice, the first time
+wrongly.
+
 ### Phase 6 — actually mounting it into OpenCode
 
 Everything above was a working system that **was not loaded**. Five phases of
